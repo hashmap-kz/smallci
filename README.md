@@ -10,7 +10,7 @@ A minimal local CI runner with a live terminal UI.
 [![Workflow Status](https://img.shields.io/github/actions/workflow/status/hashmap-kz/smallci/ci.yml?branch=master)](https://github.com/hashmap-kz/smallci/actions/workflows/ci.yml?query=branch:master)
 [![Latest Release](https://img.shields.io/github/v/release/hashmap-kz/smallci)](https://github.com/hashmap-kz/smallci/releases/latest)
 
-![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/smallci/03-day.gif)
+![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/smallci/05-day.gif)
 
 ---
 
