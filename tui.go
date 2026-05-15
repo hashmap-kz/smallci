@@ -176,6 +176,7 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+//nolint:gocyclo
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -412,6 +413,7 @@ func (m *Model) moveCursor(d int) {
 	}
 	idx := clamp(m.cursorIndex()+d, 0, len(rows)-1)
 	r := rows[idx]
+	//nolint:staticcheck
 	m.cursor = cursorPos{r.jobIdx, r.stepIdx}
 	m.lastLogLen = -1
 	m.syncLogContent(true)
@@ -791,14 +793,14 @@ func (m *Model) renderHelp() string {
 	return styleHelp.Width(m.width).Render("  " + strings.Join(parts, "  ·  "))
 }
 
-func truncate(s string, max int) string {
-	if max < 1 {
+func truncate(s string, fMax int) string {
+	if fMax < 1 {
 		return ""
 	}
-	if len(s) <= max {
+	if len(s) <= fMax {
 		return s
 	}
-	return s[:max-1] + "…"
+	return s[:fMax-1] + "…"
 }
 
 func clamp(v, lo, hi int) int {

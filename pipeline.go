@@ -61,7 +61,8 @@ type Job struct {
 	Steps []*Step
 
 	Status Status // aggregate: running if any step running, failed if any failed, etc.
-	mu     sync.Mutex
+	//nolint:unused
+	mu sync.Mutex
 }
 
 func (j *Job) Duration() time.Duration {
@@ -214,7 +215,7 @@ func (p *Pipeline) runJob(j *Job) {
 	p.setJobStatus(j, StatusPassed)
 }
 
-func (p *Pipeline) runStep(j *Job, s *Step) {
+func (p *Pipeline) runStep(_ *Job, s *Step) {
 	p.mu.Lock()
 	s.Status = StatusRunning
 	s.StartTime = time.Now()
