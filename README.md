@@ -1,83 +1,89 @@
 # smallci
 
-A minimal local CI runner with a live terminal UI. Groups run in **parallel**; steps within a group run **sequentially**.
+A minimal local CI runner with a live terminal UI.
 
-```
-┌ Pipeline ───────────────────────────────────────────────┐
-│   ✓ fmt              0.18s                              │
-│   ✓ vet              1.41s                              │
-│ ▶ ⠹ unit-tests       4.82s                              │
-│   · race-tests       waiting · group: test              │
-│   · build            waiting · group: build             │
-└─────────────────────────────────────────────────────────┘
+**Jobs run in parallel. Steps within a job run sequentially.**
 
-┌ logs · unit-tests ──────────────────────────────────────┐
-│ $ go test ./...                                         │
-│ ok   ./internal/config       0.214s                     │
-│ ok   ./internal/storage      0.921s                     │
-└─────────────────────────────────────────────────────────┘
+[![License](https://img.shields.io/github/license/hashmap-kz/smallci)](https://github.com/hashmap-kz/smallci/blob/master/LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/hashmap-kz/smallci)](https://goreportcard.com/report/github.com/hashmap-kz/smallci)
+[![Go Reference](https://pkg.go.dev/badge/github.com/hashmap-kz/smallci.svg)](https://pkg.go.dev/github.com/hashmap-kz/smallci)
+[![Workflow Status](https://img.shields.io/github/actions/workflow/status/hashmap-kz/smallci/ci.yml?branch=master)](https://github.com/hashmap-kz/smallci/actions/workflows/ci.yml?query=branch:master)
+[![Latest Release](https://img.shields.io/github/v/release/hashmap-kz/smallci)](https://github.com/hashmap-kz/smallci/releases/latest)
 
-  q quit · ↑/↓ select · enter expand · f failed-only
-```
+<!-- gif here -->
+
+---
 
 ## Install
 
-```bash
-go install github.com/hashmap-kz/smallci@latest
-```
-
-Or build from source:
+Using Go:
 
 ```bash
-git clone https://github.com/hashmap-kz/smallci
-cd smallci
-go build -o smallci .
+go install github.com/alzhi/smallci@latest
 ```
+
+Using Homebrew:
+
+```bash
+brew tap hashmap-kz/homebrew-tap
+brew install smallci
+```
+
+---
 
 ## Usage
 
 ```bash
-# Run with default smallci.yaml in current dir
+# Run with smallci.yaml in current directory
 smallci
 
-# Specify config file
-smallci path/to/config.yaml
+# Specify a config file
+smallci run -c path/to/config.yaml
+
+# Generate a default config and save it
+smallci init go > smallci.yaml
 ```
+
+---
 
 ## Config
 
 ```yaml
-steps:
-  - name: fmt
-    run: gofmt -l ./...
-    group: lint          # steps with the same group run sequentially
+jobs:
+  - name: lint
+    steps:
+      - name: fmt
+        run: gofumpt -w .
+      - name: vet
+        run: go vet ./...
 
-  - name: vet
-    run: go vet ./...
-    group: lint          # runs after fmt (same group)
+  - name: test
+    steps:
+      - name: unit
+        run: go test -v -race ./...
 
-  - name: unit-tests
-    run: go test ./...
-    group: test          # lint and test groups run in parallel
-
-  - name: race-tests
-    run: go test -race ./...
-    group: test          # runs after unit-tests
+  - name: build
+    steps:
+      - name: build
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" ./...
 ```
 
-**Groups** are the unit of parallelism. All distinct groups start simultaneously. Within a group, steps run in order. If a step fails, the rest of its group is skipped.
-
-Steps without a `group` are each their own group (fully parallel).
+---
 
 ## Keybindings
 
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` or `k` / `j` | Select step |
-| `enter` | Toggle log panel expand |
-| `f` | Toggle failed-only view |
-| `q` / `ctrl+c` | Quit |
+| Key                    | Action                     |
+|------------------------|----------------------------|
+| `↑` / `↓` or `k` / `j` | Navigate                   |
+| `h` / `l`              | Fold / unfold job          |
+| `tab`                  | Switch focus (tree ↔ logs) |
+| `f`                    | Jump to first failure      |
+| `r`                    | Re-run selected job        |
+| `t`                    | Toggle timeline view       |
+| `q` / `ctrl+c`         | Quit                       |
 
-## Exit code
+---
 
-`smallci` exits `1` if any step failed, `0` otherwise — suitable for use in scripts.
+## License
+
+MIT. See [LICENSE](./LICENSE) for details.
