@@ -1,4 +1,4 @@
-module github.com/alzhi/smallci
+module github.com/hashmap-kz/smallci
 
 go 1.25.0
 

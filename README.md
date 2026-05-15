@@ -23,13 +23,13 @@ A minimal local CI runner with a live terminal UI. Groups run in **parallel**; s
 ## Install
 
 ```bash
-go install github.com/alzhi/smallci@latest
+go install github.com/hashmap-kz/smallci@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/alzhi/smallci
+git clone https://github.com/hashmap-kz/smallci
 cd smallci
 go build -o smallci .
 ```
