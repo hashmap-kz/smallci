@@ -1,0 +1,46 @@
+---
+name: Lint
+
+on:
+  push:
+    branches: &branches
+      - "master"
+      - "release/**"
+    paths-ignore: &paths-ignore
+      - ".github/**"
+      - ".run/**"
+      - ".vscode/**"
+      - "docs/**"
+      - "examples/**"
+      - "charts/**"
+      - "hack/**"
+      - "ui/static/**"
+      - "**/*.md"
+      - "**/*.gitignore"
+      - "**/*.gitattributes"
+      - "Makefile"
+      - ".golangci.yml"
+  pull_request:
+    branches: *branches
+    paths-ignore: *paths-ignore
+  workflow_dispatch:
+
+jobs:
+  lint:
+    if: ${{ github.event_name == 'push' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run golangci-lint
+        if: runner.os == 'Linux'
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+          skip-cache: true

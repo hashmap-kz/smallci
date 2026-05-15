@@ -1,0 +1,61 @@
+---
+name: CI
+
+on:
+  push:
+    branches: &branches
+      - "master"
+      - "release/**"
+    paths-ignore: &paths-ignore
+      - ".github/**"
+      - ".run/**"
+      - ".vscode/**"
+      - "docs/**"
+      - "examples/**"
+      - "charts/**"
+      - "hack/**"
+      - "ui/static/**"
+      - "**/*.md"
+      - "**/*.gitignore"
+      - "**/*.gitattributes"
+      - "Makefile"
+      - ".golangci.yml"
+  pull_request:
+    branches: *branches
+    paths-ignore: *paths-ignore
+  workflow_dispatch:
+
+jobs:
+  ci_job:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Ensure gofmt
+        run: test -z "$(gofmt -s -d .)"
+        shell: bash
+
+      - name: Ensure go.mod is already tidied
+        run: go mod tidy && git diff --no-patch --exit-code
+        shell: bash
+
+      - name: Run unit tests
+        run: go test -v -race ./...
+        shell: bash
+
+      # Run goreleaser to be sure that 'everything is always ready to release'
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          install-only: true
+
+      - name: Run GoReleaser (snapshot)
+        run: make snapshot
