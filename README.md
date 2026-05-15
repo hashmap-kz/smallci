@@ -19,7 +19,7 @@ A minimal local CI runner with a live terminal UI.
 Using Go:
 
 ```bash
-go install github.com/alzhi/smallci@latest
+go install github.com/hashmap-kz/smallci@latest
 ```
 
 Using Homebrew:
