@@ -1,0 +1,28 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+vendor/
+main
+.idea
+
+dist/
+bin/
+*.log
+coverage.txt
+__debug_bin*
+pprof/
+nohup.out
+
+# AI related
+.claude/
+.claudemds/
+claude_history.json
+CLAUDE.md
+
+# project related
+smallci

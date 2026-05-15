@@ -1,0 +1,19 @@
+jobs:
+  - name: lint
+    steps:
+      - name: fmt
+        run: gofumpt -w .
+      - name: vet
+        run: go vet ./...
+
+  - name: test
+    steps:
+      - name: unit
+        run: go test -v ./...
+      - name: race
+        run: go test -v -race ./...
+
+  - name: build
+    steps:
+      - name: build
+        run: go build ./...
