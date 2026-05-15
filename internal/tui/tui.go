@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/hashmap-kz/smallci/internal/pipeline"
+	"github.com/hashmap-kz/smallci/internal/x/fmtx"
 )
 
 // palette
@@ -637,12 +638,12 @@ func (m *Model) renderJobSummary() string {
 
 	if m.pipelineDone {
 		if m.flashPassed {
-			fmt.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colGreen).Bold(true).Render("✓ all jobs passed"))
+			fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colGreen).Bold(true).Render("✓ all jobs passed"))
 		} else {
-			fmt.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colRed).Bold(true).Render("✗ pipeline failed"))
+			fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colRed).Bold(true).Render("✗ pipeline failed"))
 		}
 	}
-	fmt.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colAmber).Bold(true).Render(j.Name))
+	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colAmber).Bold(true).Render(j.Name))
 
 	for _, s := range j.Steps {
 		row := fmt.Sprintf("  %s %s", statusIcon(s.Status, m.tick), styleStepName.Render(s.Name))
@@ -655,7 +656,7 @@ func (m *Model) renderJobSummary() string {
 		sb.WriteString(row + "\n")
 		if s.Status == pipeline.StatusFailed {
 			if hint := lastErrLine(s); hint != "" {
-				fmt.Fprintf(&sb, "    %s\n", styleErrHint.Render("↳ "+truncate(hint, innerW-6)))
+				fmtx.Fprintf(&sb, "    %s\n", styleErrHint.Render("↳ "+truncate(hint, innerW-6)))
 			}
 		}
 	}
@@ -705,7 +706,7 @@ func (m *Model) renderTimeline() string {
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, " Timeline  %s total\n\n", durStr(totalDur))
+	fmtx.Fprintf(&sb, " Timeline  %s total\n\n", durStr(totalDur))
 
 	for _, j := range m.pipeline.Jobs {
 		var jStart, jEnd time.Time
@@ -727,7 +728,7 @@ func (m *Model) renderTimeline() string {
 		label := styleDim.Render(fmt.Sprintf("%-*s", labelW, truncate(j.Name, labelW)))
 
 		if jStart.IsZero() {
-			fmt.Fprintf(&sb, "  %s  %s\n", label, styleDim.Render("·"))
+			fmtx.Fprintf(&sb, "  %s  %s\n", label, styleDim.Render("·"))
 			continue
 		}
 		if jEnd.IsZero() {
@@ -757,7 +758,7 @@ func (m *Model) renderTimeline() string {
 			barColor = colMuted
 		}
 		bar := lipgloss.NewStyle().Foreground(barColor).Render(strings.Repeat("█", barLen))
-		fmt.Fprintf(&sb, "  %s  %s%s  %s\n",
+		fmtx.Fprintf(&sb, "  %s  %s%s  %s\n",
 			label, strings.Repeat(" ", lead), bar, styleDim.Render(durStr(jEnd.Sub(jStart))))
 	}
 
@@ -766,7 +767,7 @@ func (m *Model) renderTimeline() string {
 	if gap < 0 {
 		gap = 0
 	}
-	fmt.Fprintf(&sb, "\n%s", styleDim.Render(
+	fmtx.Fprintf(&sb, "\n%s", styleDim.Render(
 		fmt.Sprintf("  %s  0s%s%s", strings.Repeat(" ", labelW), strings.Repeat(" ", gap), axisRight),
 	))
 
