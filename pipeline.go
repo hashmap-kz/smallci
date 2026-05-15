@@ -149,6 +149,38 @@ func (p *Pipeline) Run(notify func()) {
 	}()
 }
 
+// AllPassed reports whether every job finished with StatusPassed.
+func (p *Pipeline) AllPassed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, j := range p.Jobs {
+		if j.Status != StatusPassed {
+			return false
+		}
+	}
+	return true
+}
+
+// RerunJob resets the job at jobIdx and re-runs it in a new goroutine.
+func (p *Pipeline) RerunJob(jobIdx int) {
+	if jobIdx < 0 || jobIdx >= len(p.Jobs) {
+		return
+	}
+	j := p.Jobs[jobIdx]
+	p.mu.Lock()
+	j.Status = StatusWaiting
+	for _, s := range j.Steps {
+		s.mu.Lock()
+		s.Status = StatusWaiting
+		s.Logs = nil
+		s.StartTime = time.Time{}
+		s.EndTime = time.Time{}
+		s.mu.Unlock()
+	}
+	p.mu.Unlock()
+	go p.runJob(j)
+}
+
 func (p *Pipeline) setJobStatus(j *Job, status Status) {
 	p.mu.Lock()
 	j.Status = status
