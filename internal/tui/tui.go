@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/hashmap-kz/smallci/internal/pipeline"
 )
 
 // palette
@@ -73,15 +74,15 @@ var (
 
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-func statusIcon(s Status, tick int) string {
+func statusIcon(s pipeline.Status, tick int) string {
 	switch s {
-	case StatusPassed:
+	case pipeline.StatusPassed:
 		return lipgloss.NewStyle().Foreground(colGreen).Render("✓")
-	case StatusFailed:
+	case pipeline.StatusFailed:
 		return lipgloss.NewStyle().Foreground(colRed).Render("✗")
-	case StatusRunning:
+	case pipeline.StatusRunning:
 		return lipgloss.NewStyle().Foreground(colBlue).Render(spinFrames[tick%len(spinFrames)])
-	case StatusSkipped:
+	case pipeline.StatusSkipped:
 		return styleDim.Render("–")
 	default:
 		return styleDim.Render("·")
@@ -123,7 +124,7 @@ const leftWidth = 34
 
 // Model is the top-level Bubble Tea model.
 type Model struct {
-	pipeline   *Pipeline
+	pipeline   *pipeline.Pipeline
 	cursor     cursorPos
 	tick       int
 	width      int
@@ -133,22 +134,22 @@ type Model struct {
 	lastLogLen int
 	program    *tea.Program
 
-	folded       map[int]bool   // jobIdx -> collapsed
-	autoFollow   bool           // cursor tracks running/failing steps automatically
-	prevAllDone  bool           // previous "all jobs done" state for edge-free transition
-	seenFailed   map[*Step]bool // steps already auto-jumped to
+	folded       map[int]bool            // jobIdx -> collapsed
+	autoFollow   bool                    // cursor tracks running/failing steps automatically
+	prevAllDone  bool                    // previous "all jobs done" state for edge-free transition
+	seenFailed   map[*pipeline.Step]bool // steps already auto-jumped to
 	mode         viewMode
 	pipelineDone bool // true once we've detected a run completion
 	flashTick    int  // counts down over ~15 ticks (~1.2s) for border flash
 	flashPassed  bool // true = green flash, false = red flash
 }
 
-func NewModel(p *Pipeline) *Model {
+func NewModel(p *pipeline.Pipeline) *Model {
 	return &Model{
 		pipeline:   p,
 		cursor:     cursorPos{jobIdx: 0, stepIdx: -1},
 		folded:     make(map[int]bool),
-		seenFailed: make(map[*Step]bool),
+		seenFailed: make(map[*pipeline.Step]bool),
 		autoFollow: true,
 	}
 }
@@ -301,10 +302,10 @@ func (m *Model) handlePipelineUpdate() {
 	anyStarted := false
 	allDone := true
 	for _, j := range m.pipeline.Jobs {
-		if j.Status != StatusWaiting {
+		if j.Status != pipeline.StatusWaiting {
 			anyStarted = true
 		}
-		if j.Status == StatusWaiting || j.Status == StatusRunning {
+		if j.Status == pipeline.StatusWaiting || j.Status == pipeline.StatusRunning {
 			allDone = false
 		}
 	}
@@ -320,7 +321,7 @@ func (m *Model) handlePipelineUpdate() {
 	// Auto-jump to first new failure.
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
-			if s.Status == StatusFailed && !m.seenFailed[s] {
+			if s.Status == pipeline.StatusFailed && !m.seenFailed[s] {
 				m.seenFailed[s] = true
 				m.folded[ji] = false
 				m.cursor = cursorPos{ji, si}
@@ -336,7 +337,7 @@ func (m *Model) handlePipelineUpdate() {
 	if m.autoFollow {
 		for ji, j := range m.pipeline.Jobs {
 			for si, s := range j.Steps {
-				if s.Status == StatusRunning {
+				if s.Status == pipeline.StatusRunning {
 					if m.cursor.jobIdx != ji || m.cursor.stepIdx != si {
 						m.folded[ji] = false
 						m.cursor = cursorPos{ji, si}
@@ -352,7 +353,7 @@ func (m *Model) handlePipelineUpdate() {
 func (m *Model) jumpToFirstFailure() {
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
-			if s.Status == StatusFailed {
+			if s.Status == pipeline.StatusFailed {
 				m.folded[ji] = false
 				m.cursor = cursorPos{ji, si}
 				m.focus = focusLog
@@ -419,7 +420,7 @@ func (m *Model) moveCursor(d int) {
 	m.syncLogContent(true)
 }
 
-func (m *Model) selectedStep() *Step {
+func (m *Model) selectedStep() *pipeline.Step {
 	if m.cursor.isJob() || m.cursor.jobIdx >= len(m.pipeline.Jobs) {
 		return nil
 	}
@@ -545,7 +546,7 @@ func (m *Model) renderTree() string {
 			foldMark = styleDim.Render("▸")
 		}
 		var right string
-		if j.Status == StatusRunning || j.Status == StatusPassed || j.Status == StatusFailed {
+		if j.Status == pipeline.StatusRunning || j.Status == pipeline.StatusPassed || j.Status == pipeline.StatusFailed {
 			right = foldMark + " " + styleDim.Render(durStr(j.Duration()))
 		} else {
 			right = foldMark
@@ -580,7 +581,7 @@ func (m *Model) renderTree() string {
 			sName := truncate(s.Name, innerW-12)
 			stepLine := fmt.Sprintf("  %s%s %s", stepCur, statusIcon(s.Status, m.tick), sNameStyle.Render(sName))
 
-			if s.Status == StatusRunning || s.Status == StatusPassed || s.Status == StatusFailed {
+			if s.Status == pipeline.StatusRunning || s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed {
 				dur := styleDim.Render(durStr(s.Duration()))
 				if pad := innerW - lipgloss.Width(stepLine) - lipgloss.Width(dur); pad >= 1 {
 					stepLine += strings.Repeat(" ", pad) + dur
@@ -588,7 +589,7 @@ func (m *Model) renderTree() string {
 			}
 			lines = append(lines, stepLine)
 
-			if s.Status == StatusFailed {
+			if s.Status == pipeline.StatusFailed {
 				if hint := lastErrLine(s); hint != "" {
 					lines = append(lines, fmt.Sprintf("      %s", styleErrHint.Render("↳ "+truncate(hint, innerW-8))))
 				}
@@ -645,14 +646,14 @@ func (m *Model) renderJobSummary() string {
 
 	for _, s := range j.Steps {
 		row := fmt.Sprintf("  %s %s", statusIcon(s.Status, m.tick), styleStepName.Render(s.Name))
-		if s.Status == StatusRunning || s.Status == StatusPassed || s.Status == StatusFailed {
+		if s.Status == pipeline.StatusRunning || s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed {
 			dur := styleDim.Render(durStr(s.Duration()))
 			if pad := innerW - lipgloss.Width(row) - lipgloss.Width(dur); pad >= 1 {
 				row += strings.Repeat(" ", pad) + dur
 			}
 		}
 		sb.WriteString(row + "\n")
-		if s.Status == StatusFailed {
+		if s.Status == pipeline.StatusFailed {
 			if hint := lastErrLine(s); hint != "" {
 				fmt.Fprintf(&sb, "    %s\n", styleErrHint.Render("↳ "+truncate(hint, innerW-6)))
 			}
@@ -715,7 +716,7 @@ func (m *Model) renderTimeline() string {
 				}
 			}
 			end := s.EndTime
-			if end.IsZero() && s.Status == StatusRunning {
+			if end.IsZero() && s.Status == pipeline.StatusRunning {
 				end = time.Now()
 			}
 			if !end.IsZero() && end.After(jEnd) {
@@ -746,11 +747,11 @@ func (m *Model) renderTimeline() string {
 
 		var barColor lipgloss.Color
 		switch j.Status {
-		case StatusPassed:
+		case pipeline.StatusPassed:
 			barColor = colGreen
-		case StatusFailed:
+		case pipeline.StatusFailed:
 			barColor = colRed
-		case StatusRunning:
+		case pipeline.StatusRunning:
 			barColor = colAmber
 		default:
 			barColor = colMuted
@@ -814,7 +815,7 @@ func clamp(v, lo, hi int) int {
 }
 
 // lastErrLine returns the last non-empty, non-command log line from a step.
-func lastErrLine(s *Step) string {
+func lastErrLine(s *pipeline.Step) string {
 	logs := s.GetLogs()
 	for i := len(logs) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(logs[i])

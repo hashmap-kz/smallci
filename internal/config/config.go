@@ -1,9 +1,9 @@
-package main
+package config
 
 import (
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"sigs.k8s.io/yaml"
 )
 
 type StepConfig struct {

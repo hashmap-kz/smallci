@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hashmap-kz/smallci/internal/cmd"
 	"github.com/urfave/cli/v3"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -27,7 +26,7 @@ func main() {
 						Sources: cli.EnvVars("SMALLCI_CONFIG"),
 					},
 				},
-				Action: runAction,
+				Action: cmd.RunAction,
 			},
 			{
 				Name:      "init",
@@ -37,7 +36,7 @@ func main() {
 					{
 						Name:   "go",
 						Usage:  "Go project (lint, test, build)",
-						Action: initGoAction,
+						Action: cmd.InitGoAction,
 					},
 				},
 			},
@@ -48,31 +47,4 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func runAction(_ context.Context, cmd *cli.Command) error {
-	configPath := cmd.String("c")
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		return fmt.Errorf("load config %s: %w", configPath, err)
-	}
-
-	pipeline := NewPipeline(cfg)
-	m := NewModel(pipeline)
-
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	m.SetProgram(p)
-
-	if _, err := p.Run(); err != nil {
-		return fmt.Errorf("run program: %w", err)
-	}
-
-	for _, job := range pipeline.Jobs {
-		if job.Status == StatusFailed {
-			os.Exit(1)
-		}
-	}
-
-	return nil
 }

@@ -1,4 +1,4 @@
-package main
+package cmd
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 //go:embed templates/go.yaml
 var goTemplate []byte
 
-func initGoAction(_ context.Context, _ *cli.Command) error {
+func InitGoAction(_ context.Context, _ *cli.Command) error {
 	fmt.Print(string(goTemplate))
 	return nil
 }

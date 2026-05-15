@@ -1,4 +1,4 @@
-package main
+package pipeline
 
 import (
 	"fmt"
@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hashmap-kz/smallci/internal/config"
 )
 
 type Status int
@@ -97,7 +99,7 @@ type Pipeline struct {
 	notify func()
 }
 
-func NewPipeline(cfg *Config) *Pipeline {
+func NewPipeline(cfg *config.Config) *Pipeline {
 	p := &Pipeline{
 		done: make(chan struct{}),
 	}
