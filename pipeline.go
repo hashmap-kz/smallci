@@ -192,8 +192,7 @@ func (p *Pipeline) runStep(j *Job, s *Step) {
 	s.AppendLog(fmt.Sprintf("$ %s", s.Command))
 	p.notify()
 
-	parts := strings.Fields(s.Command)
-	if len(parts) == 0 {
+	if strings.TrimSpace(s.Command) == "" {
 		p.mu.Lock()
 		s.Status = StatusFailed
 		s.EndTime = time.Now()
@@ -203,7 +202,7 @@ func (p *Pipeline) runStep(j *Job, s *Step) {
 		return
 	}
 
-	cmd := exec.Command(parts[0], parts[1:]...)
+	cmd := exec.Command("sh", "-c", s.Command)
 	cmd.Stdout = &lineWriter{step: s, notify: p.notify}
 	cmd.Stderr = &lineWriter{step: s, notify: p.notify}
 
@@ -217,6 +216,9 @@ func (p *Pipeline) runStep(j *Job, s *Step) {
 		s.Status = StatusPassed
 	}
 	p.mu.Unlock()
+	if err != nil {
+		s.AppendLog(fmt.Sprintf("error: %v", err))
+	}
 	p.notify()
 }
 
