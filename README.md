@@ -12,6 +12,8 @@ A minimal local CI runner with a live terminal UI.
 
 ![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/smallci/05-day.gif)
 
+_Purpose: concurrency, grouping, aggressive simplicity._
+
 ---
 
 ## Install
