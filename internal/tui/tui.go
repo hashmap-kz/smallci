@@ -259,7 +259,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "r":
 			if m.focus == focusTree {
-				m.rerunJob(m.cursor.jobIdx)
+				if m.cursor.isJob() {
+					m.rerunJob(m.cursor.jobIdx)
+				} else {
+					m.rerunStep(m.cursor.jobIdx, m.cursor.stepIdx)
+				}
 			}
 
 		case "R":
@@ -381,6 +385,21 @@ func (m *Model) rerunJob(jobIdx int) {
 	m.prevAllDone = false
 	m.autoFollow = true
 	m.pipeline.RerunJob(jobIdx)
+}
+
+func (m *Model) rerunStep(jobIdx, stepIdx int) {
+	if jobIdx < 0 || jobIdx >= len(m.pipeline.Jobs) {
+		return
+	}
+	j := m.pipeline.Jobs[jobIdx]
+	if stepIdx < 0 || stepIdx >= len(j.Steps) {
+		return
+	}
+	delete(m.seenFailed, j.Steps[stepIdx])
+	m.pipelineDone = false
+	m.prevAllDone = false
+	m.autoFollow = false
+	m.pipeline.RerunStep(jobIdx, stepIdx)
 }
 
 func (m *Model) rerunAll() {
@@ -870,7 +889,7 @@ func (m *Model) renderHelp() string {
 		"↑/↓ navigate",
 		"h/l fold/unfold",
 		"f jump failure",
-		"r rerun job",
+		"r rerun job/step",
 		"R reload all",
 		viewToggle,
 		"q quit",
