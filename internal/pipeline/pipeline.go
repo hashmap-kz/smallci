@@ -184,6 +184,87 @@ func (p *Pipeline) RerunJob(jobIdx int) {
 	go p.runJob(j)
 }
 
+// RerunStep resets the step at stepIdx within jobIdx and re-runs it in isolation,
+// then recomputes the parent job's aggregate status.
+func (p *Pipeline) RerunStep(jobIdx, stepIdx int) {
+	if jobIdx < 0 || jobIdx >= len(p.Jobs) {
+		return
+	}
+	j := p.Jobs[jobIdx]
+	if stepIdx < 0 || stepIdx >= len(j.Steps) {
+		return
+	}
+	s := j.Steps[stepIdx]
+
+	p.mu.Lock()
+	s.Status = StatusWaiting
+	s.Logs = nil
+	s.StartTime = time.Time{}
+	s.EndTime = time.Time{}
+	j.Status = StatusRunning
+	p.mu.Unlock()
+
+	go func() {
+		p.runStep(j, s)
+		p.mu.Lock()
+		anyFailed := false
+		allPassed := true
+		for _, step := range j.Steps {
+			if step.Status == StatusFailed {
+				anyFailed = true
+				allPassed = false
+				break
+			}
+			if step.Status != StatusPassed {
+				allPassed = false
+			}
+		}
+		switch {
+		case anyFailed:
+			j.Status = StatusFailed
+		case allPassed:
+			j.Status = StatusPassed
+		default:
+			j.Status = StatusRunning
+		}
+		p.mu.Unlock()
+		p.notify()
+	}()
+}
+
+// RerunAll resets every job and step and re-runs the full pipeline.
+func (p *Pipeline) RerunAll() {
+	p.mu.Lock()
+	for _, j := range p.Jobs {
+		j.Status = StatusWaiting
+		for _, s := range j.Steps {
+			s.mu.Lock()
+			s.Status = StatusWaiting
+			s.Logs = nil
+			s.StartTime = time.Time{}
+			s.EndTime = time.Time{}
+			s.mu.Unlock()
+		}
+	}
+	p.done = make(chan struct{})
+	p.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, j := range p.Jobs {
+		j := j
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.runJob(j)
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(p.done)
+		p.notify()
+	}()
+}
+
 func (p *Pipeline) setJobStatus(j *Job, status Status) {
 	p.mu.Lock()
 	j.Status = status
@@ -237,7 +318,7 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 		return
 	}
 
-	cmd := exec.Command("sh", "-c", s.Command)
+	cmd := exec.Command("sh", "-c", s.Command) //nolint:gosec
 	cmd.Stdout = &lineWriter{step: s, notify: p.notify}
 	cmd.Stderr = &lineWriter{step: s, notify: p.notify}
 

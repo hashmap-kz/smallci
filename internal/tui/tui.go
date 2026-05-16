@@ -259,8 +259,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "r":
 			if m.focus == focusTree {
-				m.rerunJob(m.cursor.jobIdx)
+				if m.cursor.isJob() {
+					m.rerunJob(m.cursor.jobIdx)
+				} else {
+					m.rerunStep(m.cursor.jobIdx, m.cursor.stepIdx)
+				}
 			}
+
+		case "R":
+			m.rerunAll()
 
 		case "up", "k":
 			if m.focus == focusTree {
@@ -322,15 +329,16 @@ func (m *Model) handlePipelineUpdate() {
 	// Auto-jump to first new failure.
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
-			if s.Status == pipeline.StatusFailed && !m.seenFailed[s] {
-				m.seenFailed[s] = true
-				m.folded[ji] = false
-				m.cursor = cursorPos{ji, si}
-				m.focus = focusLog
-				m.autoFollow = false
-				m.lastLogLen = -1
-				return
+			if s.Status != pipeline.StatusFailed || m.seenFailed[s] {
+				continue
 			}
+			m.seenFailed[s] = true
+			m.folded[ji] = false
+			m.cursor = cursorPos{ji, si}
+			m.focus = focusLog
+			m.autoFollow = false
+			m.lastLogLen = -1
+			return
 		}
 	}
 
@@ -354,14 +362,15 @@ func (m *Model) handlePipelineUpdate() {
 func (m *Model) jumpToFirstFailure() {
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
-			if s.Status == pipeline.StatusFailed {
-				m.folded[ji] = false
-				m.cursor = cursorPos{ji, si}
-				m.focus = focusLog
-				m.lastLogLen = -1
-				m.syncLogContent(true)
-				return
+			if s.Status != pipeline.StatusFailed {
+				continue
 			}
+			m.folded[ji] = false
+			m.cursor = cursorPos{ji, si}
+			m.focus = focusLog
+			m.lastLogLen = -1
+			m.syncLogContent(true)
+			return
 		}
 	}
 }
@@ -378,6 +387,33 @@ func (m *Model) rerunJob(jobIdx int) {
 	m.prevAllDone = false
 	m.autoFollow = true
 	m.pipeline.RerunJob(jobIdx)
+}
+
+func (m *Model) rerunStep(jobIdx, stepIdx int) {
+	if jobIdx < 0 || jobIdx >= len(m.pipeline.Jobs) {
+		return
+	}
+	j := m.pipeline.Jobs[jobIdx]
+	if stepIdx < 0 || stepIdx >= len(j.Steps) {
+		return
+	}
+	delete(m.seenFailed, j.Steps[stepIdx])
+	m.pipelineDone = false
+	m.prevAllDone = false
+	m.autoFollow = false
+	m.pipeline.RerunStep(jobIdx, stepIdx)
+}
+
+func (m *Model) rerunAll() {
+	for _, j := range m.pipeline.Jobs {
+		for _, s := range j.Steps {
+			delete(m.seenFailed, s)
+		}
+	}
+	m.pipelineDone = false
+	m.prevAllDone = false
+	m.autoFollow = true
+	m.pipeline.RerunAll()
 }
 
 // navRows returns all navigable rows respecting fold state.
@@ -700,33 +736,20 @@ func (m *Model) renderTimeline() string {
 	}
 
 	const labelW = 12
+	const stepIndent = 2
 	barW := innerW - labelW - 2 - 7
 	if barW < 8 {
 		barW = 8
 	}
 
+	ctx := timelineCtx{globalStart: globalStart, totalDur: totalDur, labelW: labelW, barW: barW}
+
 	var sb strings.Builder
 	fmtx.Fprintf(&sb, " Timeline  %s total\n\n", durStr(totalDur))
 
 	for _, j := range m.pipeline.Jobs {
-		var jStart, jEnd time.Time
-		for _, s := range j.Steps {
-			if !s.StartTime.IsZero() {
-				if jStart.IsZero() || s.StartTime.Before(jStart) {
-					jStart = s.StartTime
-				}
-			}
-			end := s.EndTime
-			if end.IsZero() && s.Status == pipeline.StatusRunning {
-				end = time.Now()
-			}
-			if !end.IsZero() && end.After(jEnd) {
-				jEnd = end
-			}
-		}
-
+		jStart, jEnd := jobTimeBounds(j)
 		label := styleDim.Render(fmt.Sprintf("%-*s", labelW, truncate(j.Name, labelW)))
-
 		if jStart.IsZero() {
 			fmtx.Fprintf(&sb, "  %s  %s\n", label, styleDim.Render("·"))
 			continue
@@ -734,32 +757,21 @@ func (m *Model) renderTimeline() string {
 		if jEnd.IsZero() {
 			jEnd = time.Now()
 		}
-
-		offsetFrac := float64(jStart.Sub(globalStart)) / float64(totalDur)
-		durFrac := float64(jEnd.Sub(jStart)) / float64(totalDur)
-		lead := int(offsetFrac * float64(barW))
-		barLen := int(durFrac * float64(barW))
-		if barLen < 1 {
-			barLen = 1
+		sb.WriteString(renderTimelineBar(&timelineBarOpts{
+			timelineCtx: ctx,
+			name:        j.Name,
+			start:       jStart,
+			end:         jEnd,
+			indent:      0,
+			status:      j.Status,
+			barChar:     "█",
+		}))
+		for _, s := range j.Steps {
+			row := renderTimelineStepRow(ctx, s, stepIndent)
+			if row != "" {
+				sb.WriteString(row)
+			}
 		}
-		if lead+barLen > barW {
-			barLen = barW - lead
-		}
-
-		var barColor lipgloss.Color
-		switch j.Status {
-		case pipeline.StatusPassed:
-			barColor = colGreen
-		case pipeline.StatusFailed:
-			barColor = colRed
-		case pipeline.StatusRunning:
-			barColor = colAmber
-		default:
-			barColor = colMuted
-		}
-		bar := lipgloss.NewStyle().Foreground(barColor).Render(strings.Repeat("█", barLen))
-		fmtx.Fprintf(&sb, "  %s  %s%s  %s\n",
-			label, strings.Repeat(" ", lead), bar, styleDim.Render(durStr(jEnd.Sub(jStart))))
 	}
 
 	axisRight := durStr(totalDur)
@@ -772,6 +784,97 @@ func (m *Model) renderTimeline() string {
 	))
 
 	return style.Width(rightW).Height(paneH).Render(sb.String())
+}
+
+// timelineCtx holds shared timeline geometry passed to bar-rendering helpers.
+type timelineCtx struct {
+	globalStart time.Time
+	totalDur    time.Duration
+	labelW      int
+	barW        int
+}
+
+// timelineBarOpts parameterizes a single timeline bar row.
+type timelineBarOpts struct {
+	timelineCtx
+	name    string
+	start   time.Time
+	end     time.Time
+	indent  int
+	status  pipeline.Status
+	barChar string
+}
+
+func renderTimelineBar(o *timelineBarOpts) string {
+	offsetFrac := float64(o.start.Sub(o.globalStart)) / float64(o.totalDur)
+	durFrac := float64(o.end.Sub(o.start)) / float64(o.totalDur)
+	lead := int(offsetFrac * float64(o.barW))
+	barLen := int(durFrac * float64(o.barW))
+	if barLen < 1 {
+		barLen = 1
+	}
+	if lead+barLen > o.barW {
+		barLen = o.barW - lead
+	}
+	bar := lipgloss.NewStyle().Foreground(statusBarColor(o.status)).Render(strings.Repeat(o.barChar, barLen))
+	label := styleDim.Render(fmt.Sprintf("%-*s", o.labelW-o.indent, truncate(o.name, o.labelW-o.indent)))
+	return fmt.Sprintf("  %s%s  %s%s  %s\n",
+		strings.Repeat(" ", o.indent), label,
+		strings.Repeat(" ", lead), bar,
+		styleDim.Render(durStr(o.end.Sub(o.start))))
+}
+
+func renderTimelineStepRow(ctx timelineCtx, s *pipeline.Step, indent int) string {
+	if s.StartTime.IsZero() {
+		return ""
+	}
+	sEnd := s.EndTime
+	if sEnd.IsZero() && s.Status == pipeline.StatusRunning {
+		sEnd = time.Now()
+	}
+	if sEnd.IsZero() {
+		return ""
+	}
+	return renderTimelineBar(&timelineBarOpts{
+		timelineCtx: ctx,
+		name:        s.Name,
+		start:       s.StartTime,
+		end:         sEnd,
+		indent:      indent,
+		status:      s.Status,
+		barChar:     "▪",
+	})
+}
+
+func jobTimeBounds(j *pipeline.Job) (start, end time.Time) {
+	for _, s := range j.Steps {
+		if !s.StartTime.IsZero() {
+			if start.IsZero() || s.StartTime.Before(start) {
+				start = s.StartTime
+			}
+		}
+		e := s.EndTime
+		if e.IsZero() && s.Status == pipeline.StatusRunning {
+			e = time.Now()
+		}
+		if !e.IsZero() && e.After(end) {
+			end = e
+		}
+	}
+	return start, end
+}
+
+func statusBarColor(s pipeline.Status) lipgloss.Color {
+	switch s {
+	case pipeline.StatusPassed:
+		return colGreen
+	case pipeline.StatusFailed:
+		return colRed
+	case pipeline.StatusRunning:
+		return colAmber
+	default:
+		return colMuted
+	}
 }
 
 func (m *Model) renderHelp() string {
@@ -788,7 +891,8 @@ func (m *Model) renderHelp() string {
 		"↑/↓ navigate",
 		"h/l fold/unfold",
 		"f jump failure",
-		"r rerun job",
+		"r rerun job/step",
+		"R reload all",
 		viewToggle,
 		"q quit",
 	}
