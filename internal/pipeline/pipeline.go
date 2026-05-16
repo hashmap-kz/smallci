@@ -150,9 +150,10 @@ func (p *Pipeline) Run(notify func()) {
 		}()
 	}
 
+	done := p.done
 	go func() {
 		wg.Wait()
-		close(p.done)
+		close(done)
 		p.notify()
 	}()
 }
@@ -263,9 +264,10 @@ func (p *Pipeline) RerunAll() {
 			p.runJob(j)
 		}()
 	}
+	done := p.done
 	go func() {
 		wg.Wait()
-		close(p.done)
+		close(done)
 		p.notify()
 	}()
 }
