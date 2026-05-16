@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ const (
 type Step struct {
 	Name    string
 	Command string
+	Env     map[string]string
 
 	Status    Status
 	StartTime time.Time
@@ -122,6 +124,7 @@ func NewPipeline(cfg *config.Config) *Pipeline {
 			job.Steps = append(job.Steps, &Step{
 				Name:    name,
 				Command: sc.Run,
+				Env:     sc.Env,
 				Status:  StatusWaiting,
 			})
 		}
@@ -319,6 +322,7 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 	}
 
 	cmd := exec.Command("sh", "-c", s.Command) //nolint:gosec
+	cmd.Env = mergeEnv(os.Environ(), s.Env)
 	cmd.Stdout = &lineWriter{step: s, notify: p.notify}
 	cmd.Stderr = &lineWriter{step: s, notify: p.notify}
 
@@ -336,6 +340,28 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 		s.AppendLog(fmt.Sprintf("error: %v", err))
 	}
 	p.notify()
+}
+
+// mergeEnv returns a copy of base with keys from overrides replaced or appended.
+// When overrides is empty, nil is returned so exec.Cmd inherits the parent env.
+func mergeEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(base)+len(overrides))
+	for _, kv := range base {
+		key := kv
+		if idx := strings.IndexByte(kv, '='); idx >= 0 {
+			key = kv[:idx]
+		}
+		if _, overridden := overrides[key]; !overridden {
+			result = append(result, kv)
+		}
+	}
+	for k, v := range overrides {
+		result = append(result, k+"="+v)
+	}
+	return result
 }
 
 // lineWriter streams command output line-by-line into step logs.

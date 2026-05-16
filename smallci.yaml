@@ -18,7 +18,9 @@ jobs:
   - name: build
     steps:
       - name: build
-        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/smallci
+        run: go build -ldflags="-s -w" -o bin/smallci
+        env:
+          CGO_ENABLED: 0
 
   - name: docker
     steps:
@@ -28,4 +30,6 @@ jobs:
   - name: goreleaser
     steps:
       - name: snapshot
-        run: GORELEASER_FORCE_TOKEN=github goreleaser release --skip sign --skip publish --snapshot --clean
+        run: goreleaser release --skip sign --skip publish --snapshot --clean
+        env:
+          GORELEASER_FORCE_TOKEN: github

@@ -7,8 +7,9 @@ import (
 )
 
 type StepConfig struct {
-	Name string `yaml:"name"`
-	Run  string `yaml:"run"`
+	Name string            `yaml:"name"`
+	Run  string            `yaml:"run"`
+	Env  map[string]string `yaml:"env,omitempty"`
 }
 
 type JobConfig struct {

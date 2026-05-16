@@ -126,6 +126,46 @@ jobs:
 			},
 		},
 		{
+			name: "step env vars are parsed",
+			yaml: `
+jobs:
+  - name: build
+    steps:
+      - name: compile
+        run: go build ./...
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+`,
+			check: func(t *testing.T, cfg *Config) {
+				step := cfg.Jobs[0].Steps[0]
+				if len(step.Env) != 2 {
+					t.Fatalf("want 2 env vars, got %d", len(step.Env))
+				}
+				if step.Env["CGO_ENABLED"] != "0" {
+					t.Errorf("CGO_ENABLED: want %q, got %q", "0", step.Env["CGO_ENABLED"])
+				}
+				if step.Env["GOOS"] != "linux" {
+					t.Errorf("GOOS: want %q, got %q", "linux", step.Env["GOOS"])
+				}
+			},
+		},
+		{
+			name: "step without env has nil env map",
+			yaml: `
+jobs:
+  - name: build
+    steps:
+      - name: compile
+        run: go build ./...
+`,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Jobs[0].Steps[0].Env != nil {
+					t.Errorf("want nil env, got %v", cfg.Jobs[0].Steps[0].Env)
+				}
+			},
+		},
+		{
 			name:    "invalid yaml returns error",
 			yaml:    `jobs: [unclosed`,
 			wantErr: true,
