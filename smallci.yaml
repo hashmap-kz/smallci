@@ -24,3 +24,8 @@ jobs:
     steps:
       - name: image
         run: docker buildx build -t smallci .
+
+  - name: goreleaser
+    steps:
+      - name: snapshot
+        run: GORELEASER_FORCE_TOKEN=github goreleaser release --skip sign --skip publish --snapshot --clean
