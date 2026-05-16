@@ -74,15 +74,16 @@ jobs:
 
 ## Keybindings
 
-| Key                    | Action                     |
-|------------------------|----------------------------|
-| `↑` / `↓` or `k` / `j` | Navigate                   |
-| `h` / `l`              | Fold / unfold job          |
-| `tab`                  | Switch focus (tree ↔ logs) |
-| `f`                    | Jump to first failure      |
-| `r`                    | Re-run selected job        |
-| `t`                    | Toggle timeline view       |
-| `q` / `ctrl+c`         | Quit                       |
+| Key                    | Action                                                 |
+|------------------------|--------------------------------------------------------|
+| `↑` / `↓` or `k` / `j` | Navigate                                               |
+| `h` / `l`              | Fold / unfold job                                      |
+| `tab`                  | Switch focus (tree <-> logs)                           |
+| `f`                    | Jump to first failure                                  |
+| `r`                    | Re-run selected job; re-run selected step if on a step |
+| `R`                    | Reload all - re-run the full pipeline from scratch     |
+| `t`                    | Toggle timeline view (shows per-step bars)             |
+| `q` / `ctrl+c`         | Quit                                                   |
 
 ---
 
