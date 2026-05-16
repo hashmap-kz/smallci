@@ -57,6 +57,17 @@ var (
 				BorderForeground(colBorderF).
 				Padding(0, 1)
 
+	// Tree pane has no inner padding; job cards provide their own borders.
+	stylePaneTree = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colBorder).
+			Padding(0, 0)
+
+	stylePaneTreeFocused = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colBorderF).
+				Padding(0, 0)
+
 	styleStepName = lipgloss.NewStyle().
 			Foreground(colDim)
 
@@ -82,6 +93,9 @@ var (
 
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
+// badgeWidth is the visual width of every statusBadge output.
+const badgeWidth = 9
+
 func statusIcon(s pipeline.Status, tick int) string {
 	switch s {
 	case pipeline.StatusPassed:
@@ -95,6 +109,30 @@ func statusIcon(s pipeline.Status, tick int) string {
 	default:
 		return styleDim.Render("·")
 	}
+}
+
+// statusBadge renders a right-aligned fixed-width (badgeWidth) status+timing label.
+func statusBadge(s *pipeline.Step, tick int) string {
+	frame := spinFrames[tick%len(spinFrames)]
+	var content string
+	var st lipgloss.Style
+	switch s.Status {
+	case pipeline.StatusPassed:
+		content, st = "✓ "+durStr(s.Duration()), lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	case pipeline.StatusFailed:
+		content, st = "✗ "+durStr(s.Duration()), lipgloss.NewStyle().Foreground(colRed).Bold(true)
+	case pipeline.StatusRunning:
+		content, st = frame+" "+durStr(s.Duration()), lipgloss.NewStyle().Foreground(colBlue)
+	case pipeline.StatusSkipped:
+		content, st = "skip", styleDim
+	default:
+		content, st = "·", styleDim
+	}
+	rendered := st.Render(content)
+	if pad := badgeWidth - lipgloss.Width(rendered); pad > 0 {
+		return strings.Repeat(" ", pad) + rendered
+	}
+	return rendered
 }
 
 func durStr(d time.Duration) string {
@@ -128,7 +166,10 @@ type (
 	pipelineUpdateMsg struct{}
 )
 
-const leftWidth = 34
+const leftWidth = 38
+
+// cardContentW is the content width inside a job card (leftWidth minus card border+padding).
+const cardContentW = leftWidth - 4
 
 // Model is the top-level Bubble Tea model.
 type Model struct {
@@ -315,6 +356,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "R":
 			m.rerunAll()
+
+		case "J":
+			if m.focus == focusTree {
+				m.autoFollow = false
+				m.jumpToJob(1)
+			}
+
+		case "K":
+			if m.focus == focusTree {
+				m.autoFollow = false
+				m.jumpToJob(-1)
+			}
 
 		case "up", "k":
 			if m.focus == focusTree {
@@ -542,28 +595,31 @@ func (m *Model) cursorIndex() int {
 	return 0
 }
 
-// cursorLineInTree returns the rendered line index of the cursor, accounting
-// for separator and hint lines that are not navRows.
+// cursorLineInTree returns the rendered line index of the cursor within allLines,
+// accounting for card border lines, step rows, hint rows, and inter-card gaps.
 func (m *Model) cursorLineInTree() int {
 	line := 0
 	for ji, j := range m.pipeline.Jobs {
+		line++ // top border of card
+		// job header line is at 'line'
 		if m.cursor.jobIdx == ji && m.cursor.isJob() {
 			return line
 		}
-		line++
+		line++ // job header
 		if !m.folded[ji] {
 			for si, s := range j.Steps {
 				if m.cursor.jobIdx == ji && m.cursor.stepIdx == si {
 					return line
 				}
-				line++
+				line++ // step row
 				if s.Status == pipeline.StatusFailed && lastErrLine(s) != "" {
-					line++
+					line++ // error hint row
 				}
 			}
 		}
+		line++ // bottom border of card
 		if ji < len(m.pipeline.Jobs)-1 {
-			line++
+			line++ // blank gap between cards
 		}
 	}
 	return 0
@@ -587,6 +643,18 @@ func (m *Model) adjustTreeOffset() {
 	if m.treeOffset < 0 {
 		m.treeOffset = 0
 	}
+}
+
+func (m *Model) jumpToJob(dir int) {
+	jobs := m.pipeline.Jobs
+	if len(jobs) == 0 {
+		return
+	}
+	next := clamp(m.cursor.jobIdx+dir, 0, len(jobs)-1)
+	m.cursor = cursorPos{next, -1}
+	m.lastLogLen = -1
+	m.syncLogContent(true)
+	m.adjustTreeOffset()
 }
 
 func (m *Model) moveCursor(d int) {
@@ -735,9 +803,17 @@ func (m *Model) View() string {
 
 // paneStyle returns the border style for a pane, applying the completion flash.
 func (m *Model) paneStyle(side focusPane) lipgloss.Style {
-	style := stylePane
-	if m.focus == side {
-		style = stylePaneFocused
+	var style lipgloss.Style
+	if side == focusTree {
+		style = stylePaneTree
+		if m.focus == side {
+			style = stylePaneTreeFocused
+		}
+	} else {
+		style = stylePane
+		if m.focus == side {
+			style = stylePaneFocused
+		}
 	}
 	if m.flashTick > 0 {
 		if m.flashPassed {
@@ -750,99 +826,17 @@ func (m *Model) paneStyle(side focusPane) lipgloss.Style {
 }
 
 func (m *Model) renderTree() string {
-	innerW := leftWidth - 2
 	paneH := m.height - 4
 
 	var allLines []string
-
 	for ji, j := range m.pipeline.Jobs {
-		onJob := m.cursor.jobIdx == ji && m.cursor.isJob()
-		folded := m.folded[ji]
-
-		cur := "  "
-		if onJob {
-			cur = styleCursor.Render("▶ ")
-		}
-
-		jCol := jobColor(ji)
-		var nameStyle lipgloss.Style
-		if onJob {
-			nameStyle = lipgloss.NewStyle().Foreground(jCol).Bold(true)
-		} else {
-			nameStyle = lipgloss.NewStyle().Foreground(jCol)
-		}
-
-		// N/M step progress counter.
-		done := 0
-		for _, s := range j.Steps {
-			if s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed || s.Status == pipeline.StatusSkipped {
-				done++
-			}
-		}
-		total := len(j.Steps)
-		progress := styleDim.Render(fmt.Sprintf("%d/%d", done, total))
-
-		name := truncate(j.Name, innerW-14)
-		jobLine := fmt.Sprintf("%s%s %s", cur, statusIcon(j.Status, m.tick), nameStyle.Render(name))
-
-		foldMark := styleDim.Render("▾")
-		if folded {
-			foldMark = styleDim.Render("▸")
-		}
-		var right string
-		if j.Status == pipeline.StatusRunning || j.Status == pipeline.StatusPassed || j.Status == pipeline.StatusFailed {
-			right = progress + " " + foldMark + " " + styleDim.Render(durStr(j.Duration()))
-		} else {
-			right = progress + " " + foldMark
-		}
-		if pad := innerW - lipgloss.Width(jobLine) - lipgloss.Width(right); pad >= 1 {
-			jobLine += strings.Repeat(" ", pad) + right
-		}
-		allLines = append(allLines, jobLine)
-
-		if folded {
-			if ji < len(m.pipeline.Jobs)-1 {
-				allLines = append(allLines, styleDim.Render(strings.Repeat("─", innerW)))
-			}
-			continue
-		}
-
-		for si, s := range j.Steps {
-			onStep := m.cursor.jobIdx == ji && m.cursor.stepIdx == si
-
-			stepCur := "  "
-			if onStep {
-				stepCur = styleCursor.Render("▶ ")
-			}
-			sNameStyle := styleStepName
-			if onStep {
-				sNameStyle = styleStepNameActive
-			}
-
-			sName := truncate(s.Name, innerW-12)
-			stepLine := fmt.Sprintf("  %s%s %s", stepCur, statusIcon(s.Status, m.tick), sNameStyle.Render(sName))
-
-			if s.Status == pipeline.StatusRunning || s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed {
-				dur := styleDim.Render(durStr(s.Duration()))
-				if pad := innerW - lipgloss.Width(stepLine) - lipgloss.Width(dur); pad >= 1 {
-					stepLine += strings.Repeat(" ", pad) + dur
-				}
-			}
-			allLines = append(allLines, stepLine)
-
-			if s.Status == pipeline.StatusFailed {
-				if hint := lastErrLine(s); hint != "" {
-					allLines = append(allLines, fmt.Sprintf("      %s", styleErrHint.Render("↳ "+truncate(hint, innerW-8))))
-				}
-			}
-		}
-
+		card := m.renderJobCard(ji, j)
+		allLines = append(allLines, strings.Split(card, "\n")...)
 		if ji < len(m.pipeline.Jobs)-1 {
-			allLines = append(allLines, styleDim.Render(strings.Repeat("─", innerW)))
+			allLines = append(allLines, "") // gap between cards
 		}
 	}
 
-	// Apply scroll window.
 	start := m.treeOffset
 	if start < 0 {
 		start = 0
@@ -852,6 +846,114 @@ func (m *Model) renderTree() string {
 	}
 
 	return m.paneStyle(focusTree).Width(leftWidth).Height(paneH).Render(strings.Join(allLines, "\n"))
+}
+
+func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
+	onJob := m.cursor.jobIdx == ji && m.cursor.isJob()
+	cursorOnCard := m.cursor.jobIdx == ji
+	folded := m.folded[ji]
+	jCol := jobColor(ji)
+
+	// Right side of header: N/M fold [dur]
+	done := 0
+	for _, s := range j.Steps {
+		if s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed || s.Status == pipeline.StatusSkipped {
+			done++
+		}
+	}
+	progress := styleDim.Render(fmt.Sprintf("%d/%d", done, len(j.Steps)))
+	foldMark := styleDim.Render("▾")
+	if folded {
+		foldMark = styleDim.Render("▸")
+	}
+	var rightSide string
+	if j.Status == pipeline.StatusRunning || j.Status == pipeline.StatusPassed || j.Status == pipeline.StatusFailed {
+		rightSide = progress + " " + foldMark + " " + styleDim.Render(durStr(j.Duration()))
+	} else {
+		rightSide = progress + " " + foldMark
+	}
+	rightW := lipgloss.Width(rightSide)
+
+	// Header layout: cur(2) + icon(1) + sp(1) + name(nameW) + right(rightW) = cardContentW
+	// Force the name column to an exact width so padding is trivially correct.
+	cur := "  "
+	if onJob {
+		cur = styleCursor.Render("▶ ")
+	}
+	var nameStyle lipgloss.Style
+	if onJob {
+		nameStyle = lipgloss.NewStyle().Foreground(jCol).Bold(true)
+	} else {
+		nameStyle = lipgloss.NewStyle().Foreground(jCol)
+	}
+	nameW := cardContentW - 4 - rightW
+	if nameW < 1 {
+		nameW = 1
+	}
+	nameRendered := nameStyle.Width(nameW).Render(truncate(j.Name, nameW))
+	header := fmt.Sprintf("%s%s %s%s", cur, statusIcon(j.Status, m.tick), nameRendered, rightSide)
+
+	// Step layout: " "(1) + treeConn(2) + " "(1) + cur(2) + name(stepNameW) + badge(badgeWidth) = cardContentW
+	const stepPrefix = 6
+	stepNameW := cardContentW - stepPrefix - badgeWidth
+
+	var rows []string
+	if !folded {
+		for si, s := range j.Steps {
+			onStep := m.cursor.jobIdx == ji && m.cursor.stepIdx == si
+			isLast := si == len(j.Steps)-1
+			stepCur := "  "
+			if onStep {
+				stepCur = styleCursor.Render("▶ ")
+			}
+			sNameStyle := styleStepName
+			if onStep {
+				sNameStyle = styleStepNameActive
+			}
+			conn := styleDim.Render("├─")
+			if isLast {
+				conn = styleDim.Render("└─")
+			}
+			badge := statusBadge(s, m.tick)
+			sNameRendered := sNameStyle.Width(stepNameW).Render(truncate(s.Name, stepNameW))
+			rows = append(rows, fmt.Sprintf(" %s %s%s%s", conn, stepCur, sNameRendered, badge))
+			if s.Status == pipeline.StatusFailed {
+				if hint := lastErrLine(s); hint != "" {
+					contConn := styleDim.Render("│")
+					if isLast {
+						contConn = " "
+					}
+					rows = append(rows, fmt.Sprintf(" %s    %s", contConn, styleErrHint.Render("↳ "+truncate(hint, cardContentW-8))))
+				}
+			}
+		}
+	}
+
+	content := header
+	if len(rows) > 0 {
+		content += "\n" + strings.Join(rows, "\n")
+	}
+
+	borderCol := colBorder
+	if cursorOnCard {
+		borderCol = jCol
+	}
+	if m.flashTick > 0 {
+		if m.flashPassed {
+			borderCol = colBorderOK
+		} else {
+			borderCol = colBorderErr
+		}
+	}
+	// No Width() here — setting Width triggers lipgloss word-wrap which
+	// splits trailing pad-spaces from the name column and pushes the badge
+	// to the next line. Content lines are already exactly cardContentW wide,
+	// so the border draws at the right size without enforcement.
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderCol).
+		Padding(0, 1).
+		Render(content)
 }
 
 func (m *Model) renderLogPane() string {
@@ -894,14 +996,15 @@ func (m *Model) renderJobSummary() string {
 	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(jobColor(m.cursor.jobIdx)).Bold(true).Render(j.Name))
 
 	for _, s := range j.Steps {
-		row := fmt.Sprintf("  %s %s", statusIcon(s.Status, m.tick), styleStepName.Render(s.Name))
-		if s.Status == pipeline.StatusRunning || s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed {
-			dur := styleDim.Render(durStr(s.Duration()))
-			if pad := innerW - lipgloss.Width(row) - lipgloss.Width(dur); pad >= 1 {
-				row += strings.Repeat(" ", pad) + dur
-			}
+		badge := statusBadge(s, m.tick)
+		name := truncate(s.Name, innerW-2-badgeWidth-1)
+		row := fmt.Sprintf("  %s", styleStepName.Render(name))
+		if pad := innerW - lipgloss.Width(row) - badgeWidth; pad >= 1 {
+			row += strings.Repeat(" ", pad) + badge
+		} else {
+			row += " " + badge
 		}
-		sb.WriteString(row + "\n")
+		fmtx.Fprintf(&sb, "%s\n", row)
 		if s.Status == pipeline.StatusFailed {
 			if hint := lastErrLine(s); hint != "" {
 				fmtx.Fprintf(&sb, "    %s\n", styleErrHint.Render("↳ "+truncate(hint, innerW-6)))
@@ -1067,7 +1170,7 @@ func (m *Model) renderStatusBar() string {
 	}
 	hints := []string{
 		fmt.Sprintf("tab[%s]", pane),
-		"↑↓ nav", "h/l fold",
+		"↑↓/jk nav", "J/K jobs", "h/l fold",
 		"f fail", "r rerun", "R reload",
 		viewToggle, zLabel,
 		"/ search",
