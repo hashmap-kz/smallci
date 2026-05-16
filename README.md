@@ -76,14 +76,19 @@ jobs:
 
 | Key                    | Action                                                 |
 |------------------------|--------------------------------------------------------|
-| `↑` / `↓` or `k` / `j` | Navigate                                               |
-| `h` / `l`              | Fold / unfold job                                      |
+| `↑` / `↓` or `k` / `j` | Navigate one row                                       |
+| `J` / `K`              | Jump to next / previous job                            |
+| `h` / `l`              | Fold job / unfold job or enter its steps               |
+| `enter` / `space`      | Toggle fold on selected job                            |
 | `tab`                  | Switch focus (tree <-> logs)                           |
 | `f`                    | Jump to first failure                                  |
 | `r`                    | Re-run selected job; re-run selected step if on a step |
-| `R`                    | Reload all - re-run the full pipeline from scratch     |
+| `R`                    | Reload all — re-run the full pipeline from scratch     |
 | `t`                    | Toggle timeline view (shows per-step bars)             |
-| `q` / `ctrl+c`         | Quit                                                   |
+| `z`                    | Toggle full-width log (hide / show tree)               |
+| `/`                    | Search in logs (type query, `Enter` to confirm)        |
+| `n` / `N`              | Next / previous search match                           |
+| `ctrl+c`               | Quit                                                   |
 
 ---
 
