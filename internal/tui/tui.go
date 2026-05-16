@@ -32,6 +32,20 @@ var (
 	colLogText   = lipgloss.Color("#b8b8b8")
 )
 
+// jobPalette assigns a distinct accent color to each job by index.
+var jobPalette = []lipgloss.Color{
+	lipgloss.Color("#5b9cf6"), // blue
+	lipgloss.Color("#c678dd"), // purple
+	lipgloss.Color("#56b6c2"), // cyan
+	lipgloss.Color("#e06c75"), // salmon
+	lipgloss.Color("#98c379"), // sage
+	lipgloss.Color("#e5c07b"), // gold
+}
+
+func jobColor(idx int) lipgloss.Color {
+	return jobPalette[idx%len(jobPalette)]
+}
+
 var (
 	stylePane = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -42,14 +56,6 @@ var (
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colBorderF).
 				Padding(0, 1)
-
-	styleJobName = lipgloss.NewStyle().
-			Foreground(colText).
-			Bold(true)
-
-	styleJobNameActive = lipgloss.NewStyle().
-				Foreground(colAmber).
-				Bold(true)
 
 	styleStepName = lipgloss.NewStyle().
 			Foreground(colDim)
@@ -67,10 +73,11 @@ var (
 	styleHelp = lipgloss.NewStyle().
 			Foreground(colMuted)
 
-	styleLogCmd  = lipgloss.NewStyle().Foreground(colLogCmd)
-	styleLogText = lipgloss.NewStyle().Foreground(colLogText)
-	styleLogFail = lipgloss.NewStyle().Foreground(colRed)
-	styleErrHint = lipgloss.NewStyle().Foreground(colRed).Faint(true)
+	styleLogCmd    = lipgloss.NewStyle().Foreground(colLogCmd)
+	styleLogText   = lipgloss.NewStyle().Foreground(colLogText)
+	styleLogFail   = lipgloss.NewStyle().Foreground(colRed)
+	styleLogSearch = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffe066")).Bold(true)
+	styleErrHint   = lipgloss.NewStyle().Foreground(colRed).Faint(true)
 )
 
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -135,16 +142,29 @@ type Model struct {
 	lastLogLen int
 	program    *tea.Program
 
-	folded       map[int]bool            // jobIdx -> collapsed
-	autoFollow   bool                    // cursor tracks running/failing steps automatically
-	prevAllDone  bool                    // previous "all jobs done" state for edge-free transition
-	seenFailed   map[*pipeline.Step]bool // steps already auto-jumped to
+	folded       map[int]bool
+	autoFollow   bool
+	prevAllDone  bool
+	seenFailed   map[*pipeline.Step]bool
 	mode         viewMode
-	pipelineDone bool // true once we've detected a run completion
-	flashTick    int  // counts down over ~15 ticks (~1.2s) for border flash
-	flashPassed  bool // true = green flash, false = red flash
+	pipelineDone bool
+	flashTick    int
+	flashPassed  bool
+
+	// fullLog expands the right pane to full width, hiding the tree.
+	fullLog bool
+
+	// search state for log pane filtering.
+	searchMode    bool
+	searchQuery   string
+	searchMatches []int
+	searchCurrent int
+
+	// treeOffset is the first visible rendered line index in the tree.
+	treeOffset int
 }
 
+// NewModel creates a new Model wrapping the given pipeline.
 func NewModel(p *pipeline.Pipeline) *Model {
 	return &Model{
 		pipeline:   p,
@@ -155,8 +175,10 @@ func NewModel(p *pipeline.Pipeline) *Model {
 	}
 }
 
+// SetProgram stores the tea.Program so the model can send messages from goroutines.
 func (m *Model) SetProgram(p *tea.Program) { m.program = p }
 
+// Init starts the pipeline and the tick loop.
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(tickCmd(), m.startPipeline())
 }
@@ -201,6 +223,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.searchMode {
+			m.handleSearchKey(msg)
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -219,14 +246,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = viewTimeline
 			}
 
-		// h/l: vim tree motions - h collapses/goes up, l expands/goes into
+		case "z":
+			m.fullLog = !m.fullLog
+			m.rebuildLogViewport()
+
+		case "/":
+			if m.focus == focusLog {
+				m.searchMode = true
+				m.searchQuery = ""
+				m.searchMatches = nil
+				m.searchCurrent = 0
+			}
+
+		case "n":
+			if m.focus == focusLog && len(m.searchMatches) > 0 {
+				m.nextSearchMatch(1)
+			}
+
+		case "N":
+			if m.focus == focusLog && len(m.searchMatches) > 0 {
+				m.nextSearchMatch(-1)
+			}
+
 		case "h":
 			if m.focus == focusTree {
 				m.autoFollow = false
 				if m.cursor.isJob() {
 					m.folded[m.cursor.jobIdx] = true
 				} else {
-					// Step -> move up to parent job row
 					m.cursor.stepIdx = -1
 					m.lastLogLen = -1
 					m.syncLogContent(true)
@@ -246,7 +293,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.syncLogContent(true)
 					}
 				}
-				// On a step, l is a no-op (no deeper level)
 			}
 
 		case "enter", " ":
@@ -301,12 +347,64 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleSearchKey(msg tea.KeyMsg) {
+	switch msg.String() {
+	case "esc":
+		m.searchMode = false
+		m.searchQuery = ""
+		m.searchMatches = nil
+		m.syncLogContent(false)
+	case "enter":
+		m.searchMode = false
+	case "backspace", "ctrl+h":
+		runes := []rune(m.searchQuery)
+		if len(runes) > 0 {
+			m.searchQuery = string(runes[:len(runes)-1])
+			m.recomputeSearchMatches()
+			m.syncLogContent(false)
+		}
+	case "n":
+		m.nextSearchMatch(1)
+	case "N":
+		m.nextSearchMatch(-1)
+	default:
+		if len(msg.Runes) > 0 {
+			m.searchQuery += string(msg.Runes)
+			m.recomputeSearchMatches()
+			m.syncLogContent(false)
+		}
+	}
+}
+
+func (m *Model) recomputeSearchMatches() {
+	m.searchMatches = nil
+	if m.searchQuery == "" {
+		return
+	}
+	s := m.selectedStep()
+	if s == nil {
+		return
+	}
+	q := strings.ToLower(m.searchQuery)
+	for i, line := range s.GetLogs() {
+		if strings.Contains(strings.ToLower(line), q) {
+			m.searchMatches = append(m.searchMatches, i)
+		}
+	}
+	if m.searchCurrent >= len(m.searchMatches) {
+		m.searchCurrent = 0
+	}
+}
+
+func (m *Model) nextSearchMatch(dir int) {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchCurrent = (m.searchCurrent + dir + len(m.searchMatches)) % len(m.searchMatches)
+	m.logVP.SetYOffset(m.searchMatches[m.searchCurrent])
+}
+
 func (m *Model) handlePipelineUpdate() {
-	// Detect completion by watching the not-done -> done transition.
-	// Using allDone/anyStarted avoids the race where fast jobs emit
-	// StatusRunning and StatusPassed before the tea loop processes either
-	// notification, which causes the anyJobRunning-based approach to miss
-	// the running->idle edge entirely.
 	anyStarted := false
 	allDone := true
 	for _, j := range m.pipeline.Jobs {
@@ -326,7 +424,6 @@ func (m *Model) handlePipelineUpdate() {
 	}
 	m.prevAllDone = isDone
 
-	// Auto-jump to first new failure.
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
 			if s.Status != pipeline.StatusFailed || m.seenFailed[s] {
@@ -338,11 +435,11 @@ func (m *Model) handlePipelineUpdate() {
 			m.focus = focusLog
 			m.autoFollow = false
 			m.lastLogLen = -1
+			m.adjustTreeOffset()
 			return
 		}
 	}
 
-	// Auto-follow the currently running step.
 	if m.autoFollow {
 		for ji, j := range m.pipeline.Jobs {
 			for si, s := range j.Steps {
@@ -352,6 +449,7 @@ func (m *Model) handlePipelineUpdate() {
 						m.cursor = cursorPos{ji, si}
 						m.lastLogLen = -1
 					}
+					m.adjustTreeOffset()
 					return
 				}
 			}
@@ -370,6 +468,7 @@ func (m *Model) jumpToFirstFailure() {
 			m.focus = focusLog
 			m.lastLogLen = -1
 			m.syncLogContent(true)
+			m.adjustTreeOffset()
 			return
 		}
 	}
@@ -416,7 +515,7 @@ func (m *Model) rerunAll() {
 	m.pipeline.RerunAll()
 }
 
-// navRows returns all navigable rows respecting fold state.
+// navRow is a navigable tree row (job or step).
 type navRow struct {
 	jobIdx  int
 	stepIdx int
@@ -444,6 +543,53 @@ func (m *Model) cursorIndex() int {
 	return 0
 }
 
+// cursorLineInTree returns the rendered line index of the cursor, accounting
+// for separator and hint lines that are not navRows.
+func (m *Model) cursorLineInTree() int {
+	line := 0
+	for ji, j := range m.pipeline.Jobs {
+		if m.cursor.jobIdx == ji && m.cursor.isJob() {
+			return line
+		}
+		line++
+		if !m.folded[ji] {
+			for si, s := range j.Steps {
+				if m.cursor.jobIdx == ji && m.cursor.stepIdx == si {
+					return line
+				}
+				line++
+				if s.Status == pipeline.StatusFailed && lastErrLine(s) != "" {
+					line++
+				}
+			}
+		}
+		if ji < len(m.pipeline.Jobs)-1 {
+			line++
+		}
+	}
+	return 0
+}
+
+// adjustTreeOffset keeps the cursor visible within the tree pane.
+func (m *Model) adjustTreeOffset() {
+	if m.height == 0 {
+		return
+	}
+	innerH := m.height - 4
+	if innerH < 3 {
+		innerH = 3
+	}
+	curLine := m.cursorLineInTree()
+	if curLine < m.treeOffset {
+		m.treeOffset = curLine
+	} else if curLine >= m.treeOffset+innerH {
+		m.treeOffset = curLine - innerH + 1
+	}
+	if m.treeOffset < 0 {
+		m.treeOffset = 0
+	}
+}
+
 func (m *Model) moveCursor(d int) {
 	rows := m.navRows()
 	if len(rows) == 0 {
@@ -455,6 +601,7 @@ func (m *Model) moveCursor(d int) {
 	m.cursor = cursorPos{r.jobIdx, r.stepIdx}
 	m.lastLogLen = -1
 	m.syncLogContent(true)
+	m.adjustTreeOffset()
 }
 
 func (m *Model) selectedStep() *pipeline.Step {
@@ -468,12 +615,19 @@ func (m *Model) selectedStep() *pipeline.Step {
 	return nil
 }
 
+func (m *Model) rightPaneWidth() int {
+	if m.fullLog {
+		return m.width - 4
+	}
+	return m.width - leftWidth - 4
+}
+
 func (m *Model) logVPWidth() int {
-	return m.width - leftWidth - 6
+	return m.rightPaneWidth() - 2
 }
 
 func (m *Model) logVPHeight() int {
-	h := m.height - 4
+	h := m.height - 5
 	if h < 3 {
 		h = 3
 	}
@@ -498,15 +652,20 @@ func (m *Model) syncLogContent(forceBottom bool) {
 	if newLen == m.lastLogLen && !forceBottom {
 		return
 	}
+	q := strings.ToLower(m.searchQuery)
 	var sb strings.Builder
 	for _, line := range logs {
-		switch {
-		case strings.HasPrefix(line, "$"):
-			sb.WriteString(styleLogCmd.Render(line))
-		case strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "--- FAIL"):
-			sb.WriteString(styleLogFail.Render(line))
-		default:
-			sb.WriteString(styleLogText.Render(line))
+		if q != "" && strings.Contains(strings.ToLower(line), q) {
+			sb.WriteString(styleLogSearch.Render(line))
+		} else {
+			switch {
+			case strings.HasPrefix(line, "$"):
+				sb.WriteString(styleLogCmd.Render(line))
+			case strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "--- FAIL"):
+				sb.WriteString(styleLogFail.Render(line))
+			default:
+				sb.WriteString(styleLogText.Render(line))
+			}
 		}
 		sb.WriteByte('\n')
 	}
@@ -517,11 +676,39 @@ func (m *Model) syncLogContent(forceBottom bool) {
 	m.lastLogLen = newLen
 }
 
+// pipelineElapsed returns the wall-clock span of the current run.
+// For running pipelines this grows; for completed ones it is fixed.
+func (m *Model) pipelineElapsed() time.Duration {
+	var start, end time.Time
+	for _, j := range m.pipeline.Jobs {
+		for _, s := range j.Steps {
+			if s.StartTime.IsZero() {
+				continue
+			}
+			if start.IsZero() || s.StartTime.Before(start) {
+				start = s.StartTime
+			}
+			e := s.EndTime
+			if e.IsZero() {
+				e = time.Now()
+			}
+			if e.After(end) {
+				end = e
+			}
+		}
+	}
+	if start.IsZero() {
+		return 0
+	}
+	return end.Sub(start)
+}
+
+// View renders the full TUI frame.
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "loading…"
 	}
-	left := m.renderTree()
+
 	var right string
 	switch {
 	case m.mode == viewTimeline:
@@ -531,14 +718,19 @@ func (m *Model) View() string {
 	default:
 		right = m.renderLogPane()
 	}
+
+	if m.fullLog {
+		return lipgloss.JoinVertical(lipgloss.Left, right, m.renderStatusBar())
+	}
+
+	left := m.renderTree()
 	return lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.JoinHorizontal(lipgloss.Top, left, right),
-		m.renderHelp(),
+		m.renderStatusBar(),
 	)
 }
 
-// paneStyle returns the border style for a pane, applying the completion flash
-// which temporarily overrides the focused border color.
+// paneStyle returns the border style for a pane, applying the completion flash.
 func (m *Model) paneStyle(side focusPane) lipgloss.Style {
 	style := stylePane
 	if m.focus == side {
@@ -555,27 +747,39 @@ func (m *Model) paneStyle(side focusPane) lipgloss.Style {
 }
 
 func (m *Model) renderTree() string {
-	// innerW is the usable content width inside the pane border+padding.
 	innerW := leftWidth - 2
-	var lines []string
+	paneH := m.height - 4
+
+	var allLines []string
 
 	for ji, j := range m.pipeline.Jobs {
 		onJob := m.cursor.jobIdx == ji && m.cursor.isJob()
 		folded := m.folded[ji]
 
-		// Job row layout:
-		//   {cur:2}{icon:1}{ :1}{name}{pad}{fold:1}{ :1}{dur:5}
-		// Name starts at column 4; duration+fold on the right.
 		cur := "  "
 		if onJob {
 			cur = styleCursor.Render("▶ ")
 		}
-		nameStyle := styleJobName
+
+		jCol := jobColor(ji)
+		var nameStyle lipgloss.Style
 		if onJob {
-			nameStyle = styleJobNameActive
+			nameStyle = lipgloss.NewStyle().Foreground(jCol).Bold(true)
+		} else {
+			nameStyle = lipgloss.NewStyle().Foreground(jCol)
 		}
 
-		name := truncate(j.Name, innerW-12)
+		// N/M step progress counter.
+		done := 0
+		for _, s := range j.Steps {
+			if s.Status == pipeline.StatusPassed || s.Status == pipeline.StatusFailed || s.Status == pipeline.StatusSkipped {
+				done++
+			}
+		}
+		total := len(j.Steps)
+		progress := styleDim.Render(fmt.Sprintf("%d/%d", done, total))
+
+		name := truncate(j.Name, innerW-14)
 		jobLine := fmt.Sprintf("%s%s %s", cur, statusIcon(j.Status, m.tick), nameStyle.Render(name))
 
 		foldMark := styleDim.Render("▾")
@@ -584,25 +788,22 @@ func (m *Model) renderTree() string {
 		}
 		var right string
 		if j.Status == pipeline.StatusRunning || j.Status == pipeline.StatusPassed || j.Status == pipeline.StatusFailed {
-			right = foldMark + " " + styleDim.Render(durStr(j.Duration()))
+			right = progress + " " + foldMark + " " + styleDim.Render(durStr(j.Duration()))
 		} else {
-			right = foldMark
+			right = progress + " " + foldMark
 		}
 		if pad := innerW - lipgloss.Width(jobLine) - lipgloss.Width(right); pad >= 1 {
 			jobLine += strings.Repeat(" ", pad) + right
 		}
-		lines = append(lines, jobLine)
+		allLines = append(allLines, jobLine)
 
 		if folded {
 			if ji < len(m.pipeline.Jobs)-1 {
-				lines = append(lines, styleDim.Render(strings.Repeat("─", innerW)))
+				allLines = append(allLines, styleDim.Render(strings.Repeat("─", innerW)))
 			}
 			continue
 		}
 
-		// Step row layout:
-		//   {"  ":2}{cur:2}{icon:1}{ :1}{name}{pad}{dur:5}
-		// Name starts at column 6; two chars deeper than the job name.
 		for si, s := range j.Steps {
 			onStep := m.cursor.jobIdx == ji && m.cursor.stepIdx == si
 
@@ -624,22 +825,30 @@ func (m *Model) renderTree() string {
 					stepLine += strings.Repeat(" ", pad) + dur
 				}
 			}
-			lines = append(lines, stepLine)
+			allLines = append(allLines, stepLine)
 
 			if s.Status == pipeline.StatusFailed {
 				if hint := lastErrLine(s); hint != "" {
-					lines = append(lines, fmt.Sprintf("      %s", styleErrHint.Render("↳ "+truncate(hint, innerW-8))))
+					allLines = append(allLines, fmt.Sprintf("      %s", styleErrHint.Render("↳ "+truncate(hint, innerW-8))))
 				}
 			}
 		}
 
 		if ji < len(m.pipeline.Jobs)-1 {
-			lines = append(lines, styleDim.Render(strings.Repeat("─", innerW)))
+			allLines = append(allLines, styleDim.Render(strings.Repeat("─", innerW)))
 		}
 	}
 
-	paneH := m.height - 3
-	return m.paneStyle(focusTree).Width(leftWidth).Height(paneH).Render(strings.Join(lines, "\n"))
+	// Apply scroll window.
+	start := m.treeOffset
+	if start < 0 {
+		start = 0
+	}
+	if start < len(allLines) {
+		allLines = allLines[start:]
+	}
+
+	return m.paneStyle(focusTree).Width(leftWidth).Height(paneH).Render(strings.Join(allLines, "\n"))
 }
 
 func (m *Model) renderLogPane() string {
@@ -655,14 +864,14 @@ func (m *Model) renderLogPane() string {
 	m.logVP.Width = m.logVPWidth()
 	m.logVP.Height = m.logVPHeight()
 
-	rightW := m.width - leftWidth - 4
-	paneH := m.height - 3
+	rightW := m.rightPaneWidth()
+	paneH := m.height - 4
 	return m.paneStyle(focusLog).Width(rightW).Height(paneH).Render(header + "\n" + m.logVP.View())
 }
 
 func (m *Model) renderJobSummary() string {
-	rightW := m.width - leftWidth - 4
-	paneH := m.height - 3
+	rightW := m.rightPaneWidth()
+	paneH := m.height - 4
 	innerW := rightW - 4
 
 	if m.cursor.jobIdx >= len(m.pipeline.Jobs) {
@@ -679,7 +888,7 @@ func (m *Model) renderJobSummary() string {
 			fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colRed).Bold(true).Render("✗ pipeline failed"))
 		}
 	}
-	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colAmber).Bold(true).Render(j.Name))
+	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(jobColor(m.cursor.jobIdx)).Bold(true).Render(j.Name))
 
 	for _, s := range j.Steps {
 		row := fmt.Sprintf("  %s %s", statusIcon(s.Status, m.tick), styleStepName.Render(s.Name))
@@ -701,8 +910,8 @@ func (m *Model) renderJobSummary() string {
 }
 
 func (m *Model) renderTimeline() string {
-	rightW := m.width - leftWidth - 4
-	paneH := m.height - 3
+	rightW := m.rightPaneWidth()
+	paneH := m.height - 4
 	innerW := rightW - 4
 
 	style := m.paneStyle(focusLog)
@@ -747,10 +956,10 @@ func (m *Model) renderTimeline() string {
 	var sb strings.Builder
 	fmtx.Fprintf(&sb, " Timeline  %s total\n\n", durStr(totalDur))
 
-	for _, j := range m.pipeline.Jobs {
+	for ji, j := range m.pipeline.Jobs {
 		jStart, jEnd := jobTimeBounds(j)
-		label := styleDim.Render(fmt.Sprintf("%-*s", labelW, truncate(j.Name, labelW)))
 		if jStart.IsZero() {
+			label := lipgloss.NewStyle().Foreground(jobColor(ji)).Render(fmt.Sprintf("%-*s", labelW, truncate(j.Name, labelW)))
 			fmtx.Fprintf(&sb, "  %s  %s\n", label, styleDim.Render("·"))
 			continue
 		}
@@ -765,6 +974,7 @@ func (m *Model) renderTimeline() string {
 			indent:      0,
 			status:      j.Status,
 			barChar:     "█",
+			labelColor:  jobColor(ji),
 		}))
 		for _, s := range j.Steps {
 			row := renderTimelineStepRow(ctx, s, stepIndent)
@@ -786,6 +996,109 @@ func (m *Model) renderTimeline() string {
 	return style.Width(rightW).Height(paneH).Render(sb.String())
 }
 
+func (m *Model) renderStatusBar() string {
+	if m.searchMode {
+		return m.renderSearchBar()
+	}
+
+	var running, passed, failed int
+	for _, j := range m.pipeline.Jobs {
+		switch j.Status {
+		case pipeline.StatusRunning:
+			running++
+		case pipeline.StatusPassed:
+			passed++
+		case pipeline.StatusFailed:
+			failed++
+		}
+	}
+
+	elapsed := m.pipelineElapsed()
+
+	var statusParts []string
+	if running > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colAmber).Render(fmt.Sprintf("● %d running", running)))
+	}
+	if passed > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colGreen).Render(fmt.Sprintf("✓ %d passed", passed)))
+	}
+	if failed > 0 {
+		statusParts = append(statusParts, lipgloss.NewStyle().Foreground(colRed).Render(fmt.Sprintf("✗ %d failed", failed)))
+	}
+	if elapsed > 0 {
+		statusParts = append(statusParts, styleDim.Render("⏱ "+durStr(elapsed)))
+	}
+
+	// Current selection breadcrumb on the right of line 1.
+	var selInfo string
+	if m.cursor.jobIdx < len(m.pipeline.Jobs) {
+		j := m.pipeline.Jobs[m.cursor.jobIdx]
+		jLabel := lipgloss.NewStyle().Foreground(jobColor(m.cursor.jobIdx)).Render(j.Name)
+		if m.cursor.isJob() {
+			selInfo = jLabel
+		} else if m.cursor.stepIdx < len(j.Steps) {
+			s := j.Steps[m.cursor.stepIdx]
+			selInfo = jLabel + styleDim.Render(" › ") + lipgloss.NewStyle().Foreground(colText).Render(s.Name)
+		}
+	}
+
+	line1Left := "  " + strings.Join(statusParts, "  ")
+	line1Right := selInfo + "  "
+	pad1 := m.width - lipgloss.Width(line1Left) - lipgloss.Width(line1Right)
+	if pad1 < 0 {
+		pad1 = 0
+	}
+	line1 := line1Left + strings.Repeat(" ", pad1) + line1Right
+
+	pane := "tree"
+	if m.focus == focusLog {
+		pane = "logs"
+	}
+	viewToggle := "t timeline"
+	if m.mode == viewTimeline {
+		viewToggle = "t normal"
+	}
+	zLabel := "z zoom"
+	if m.fullLog {
+		zLabel = "z split"
+	}
+	hints := []string{
+		fmt.Sprintf("tab[%s]", pane),
+		"↑↓ nav", "h/l fold",
+		"f fail", "r rerun", "R reload",
+		viewToggle, zLabel,
+		"/ search",
+		"q quit",
+	}
+	line2 := styleHelp.Width(m.width).Render("  " + strings.Join(hints, "  ·  "))
+
+	return line1 + "\n" + line2
+}
+
+func (m *Model) renderSearchBar() string {
+	cursor := lipgloss.NewStyle().Foreground(colAmber).Render("|")
+	prompt := styleDim.Render("/") + " " +
+		lipgloss.NewStyle().Foreground(colText).Render(m.searchQuery) + cursor
+
+	var matchInfo string
+	switch {
+	case len(m.searchMatches) > 0:
+		matchInfo = styleDim.Render(fmt.Sprintf("  [%d/%d]", m.searchCurrent+1, len(m.searchMatches)))
+	case m.searchQuery != "":
+		matchInfo = lipgloss.NewStyle().Foreground(colRed).Render("  no matches")
+	}
+
+	hints := styleHelp.Render("n next  N prev  Esc cancel  ")
+	line1Left := "  " + prompt + matchInfo
+	pad := m.width - lipgloss.Width(line1Left) - lipgloss.Width(hints)
+	if pad < 0 {
+		pad = 0
+	}
+	line1 := line1Left + strings.Repeat(" ", pad) + hints
+	line2 := styleHelp.Width(m.width).Render("")
+	return line1 + "\n" + line2
+}
+
 // timelineCtx holds shared timeline geometry passed to bar-rendering helpers.
 type timelineCtx struct {
 	globalStart time.Time
@@ -797,12 +1110,13 @@ type timelineCtx struct {
 // timelineBarOpts parameterizes a single timeline bar row.
 type timelineBarOpts struct {
 	timelineCtx
-	name    string
-	start   time.Time
-	end     time.Time
-	indent  int
-	status  pipeline.Status
-	barChar string
+	name       string
+	start      time.Time
+	end        time.Time
+	indent     int
+	status     pipeline.Status
+	barChar    string
+	labelColor lipgloss.Color
 }
 
 func renderTimelineBar(o *timelineBarOpts) string {
@@ -817,7 +1131,11 @@ func renderTimelineBar(o *timelineBarOpts) string {
 		barLen = o.barW - lead
 	}
 	bar := lipgloss.NewStyle().Foreground(statusBarColor(o.status)).Render(strings.Repeat(o.barChar, barLen))
-	label := styleDim.Render(fmt.Sprintf("%-*s", o.labelW-o.indent, truncate(o.name, o.labelW-o.indent)))
+	labelStyle := styleDim
+	if o.labelColor != "" {
+		labelStyle = lipgloss.NewStyle().Foreground(o.labelColor)
+	}
+	label := labelStyle.Render(fmt.Sprintf("%-*s", o.labelW-o.indent, truncate(o.name, o.labelW-o.indent)))
 	return fmt.Sprintf("  %s%s  %s%s  %s\n",
 		strings.Repeat(" ", o.indent), label,
 		strings.Repeat(" ", lead), bar,
@@ -875,28 +1193,6 @@ func statusBarColor(s pipeline.Status) lipgloss.Color {
 	default:
 		return colMuted
 	}
-}
-
-func (m *Model) renderHelp() string {
-	pane := "tree"
-	if m.focus == focusLog {
-		pane = "logs"
-	}
-	viewToggle := "t timeline"
-	if m.mode == viewTimeline {
-		viewToggle = "t normal"
-	}
-	parts := []string{
-		fmt.Sprintf("tab [%s]", pane),
-		"↑/↓ navigate",
-		"h/l fold/unfold",
-		"f jump failure",
-		"r rerun job/step",
-		"R reload all",
-		viewToggle,
-		"q quit",
-	}
-	return styleHelp.Width(m.width).Render("  " + strings.Join(parts, "  ·  "))
 }
 
 func truncate(s string, fMax int) string {
