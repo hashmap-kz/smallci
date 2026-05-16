@@ -73,11 +73,11 @@ var (
 	styleHelp = lipgloss.NewStyle().
 			Foreground(colMuted)
 
-	styleLogCmd    = lipgloss.NewStyle().Foreground(colLogCmd)
-	styleLogText   = lipgloss.NewStyle().Foreground(colLogText)
-	styleLogFail   = lipgloss.NewStyle().Foreground(colRed)
-	styleLogSearch = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffe066")).Bold(true)
-	styleErrHint   = lipgloss.NewStyle().Foreground(colRed).Faint(true)
+	styleLogCmd       = lipgloss.NewStyle().Foreground(colLogCmd)
+	styleLogText      = lipgloss.NewStyle().Foreground(colLogText)
+	styleLogSearch    = lipgloss.NewStyle().Foreground(lipgloss.Color("#f5a623"))
+	styleLogSearchCur = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1a1a")).Background(lipgloss.Color("#f5a623")).Bold(true)
+	styleErrHint      = lipgloss.NewStyle().Foreground(colRed).Faint(true)
 )
 
 var spinFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -155,10 +155,11 @@ type Model struct {
 	fullLog bool
 
 	// search state for log pane filtering.
-	searchMode    bool
-	searchQuery   string
-	searchMatches []int
-	searchCurrent int
+	searchMode      bool
+	searchQuery     string
+	lastSearchQuery string
+	searchMatches   []int
+	searchCurrent   int
 
 	// treeOffset is the first visible rendered line index in the tree.
 	treeOffset int
@@ -363,10 +364,6 @@ func (m *Model) handleSearchKey(msg tea.KeyMsg) {
 			m.recomputeSearchMatches()
 			m.syncLogContent(false)
 		}
-	case "n":
-		m.nextSearchMatch(1)
-	case "N":
-		m.nextSearchMatch(-1)
 	default:
 		if len(msg.Runes) > 0 {
 			m.searchQuery += string(msg.Runes)
@@ -402,6 +399,8 @@ func (m *Model) nextSearchMatch(dir int) {
 	}
 	m.searchCurrent = (m.searchCurrent + dir + len(m.searchMatches)) % len(m.searchMatches)
 	m.logVP.SetYOffset(m.searchMatches[m.searchCurrent])
+	m.lastSearchQuery = "" // force re-render so current-match highlight updates
+	m.syncLogContent(false)
 }
 
 func (m *Model) handlePipelineUpdate() {
@@ -649,23 +648,26 @@ func (m *Model) syncLogContent(forceBottom bool) {
 	}
 	logs := s.GetLogs()
 	newLen := len(logs)
-	if newLen == m.lastLogLen && !forceBottom {
+	queryChanged := m.searchQuery != m.lastSearchQuery
+	if newLen == m.lastLogLen && !queryChanged && !forceBottom {
 		return
 	}
 	q := strings.ToLower(m.searchQuery)
+	currentLine := -1
+	if q != "" && len(m.searchMatches) > 0 {
+		currentLine = m.searchMatches[m.searchCurrent]
+	}
 	var sb strings.Builder
-	for _, line := range logs {
-		if q != "" && strings.Contains(strings.ToLower(line), q) {
-			sb.WriteString(styleLogSearch.Render(line))
-		} else {
-			switch {
-			case strings.HasPrefix(line, "$"):
-				sb.WriteString(styleLogCmd.Render(line))
-			case strings.HasPrefix(line, "FAIL") || strings.HasPrefix(line, "--- FAIL"):
-				sb.WriteString(styleLogFail.Render(line))
-			default:
-				sb.WriteString(styleLogText.Render(line))
-			}
+	for i, line := range logs {
+		switch {
+		case q != "" && strings.Contains(strings.ToLower(line), q) && i == currentLine:
+			sb.WriteString(highlightLine(line, q, &styleLogSearchCur))
+		case q != "" && strings.Contains(strings.ToLower(line), q):
+			sb.WriteString(highlightLine(line, q, &styleLogSearch))
+		case strings.HasPrefix(line, "$"):
+			sb.WriteString(styleLogCmd.Render(line))
+		default:
+			sb.WriteString(styleLogText.Render(line))
 		}
 		sb.WriteByte('\n')
 	}
@@ -674,6 +676,7 @@ func (m *Model) syncLogContent(forceBottom bool) {
 		m.logVP.GotoBottom()
 	}
 	m.lastLogLen = newLen
+	m.lastSearchQuery = m.searchQuery
 }
 
 // pipelineElapsed returns the wall-clock span of the current run.
@@ -1088,7 +1091,7 @@ func (m *Model) renderSearchBar() string {
 		matchInfo = lipgloss.NewStyle().Foreground(colRed).Render("  no matches")
 	}
 
-	hints := styleHelp.Render("n next  N prev  Esc cancel  ")
+	hints := styleHelp.Render("Enter confirm  Esc cancel  ")
 	line1Left := "  " + prompt + matchInfo
 	pad := m.width - lipgloss.Width(line1Left) - lipgloss.Width(hints)
 	if pad < 0 {
@@ -1213,6 +1216,29 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// highlightLine renders a log line with each occurrence of query (already lowercased)
+// highlighted using matchStyle; non-matching segments use normal text style.
+func highlightLine(line, query string, matchStyle *lipgloss.Style) string {
+	lower := strings.ToLower(line)
+	var sb strings.Builder
+	remaining := line
+	lowerRem := lower
+	for {
+		idx := strings.Index(lowerRem, query)
+		if idx < 0 {
+			sb.WriteString(styleLogText.Render(remaining))
+			break
+		}
+		if idx > 0 {
+			sb.WriteString(styleLogText.Render(remaining[:idx]))
+		}
+		sb.WriteString(matchStyle.Render(remaining[idx : idx+len(query)]))
+		remaining = remaining[idx+len(query):]
+		lowerRem = lowerRem[idx+len(query):]
+	}
+	return sb.String()
 }
 
 // lastErrLine returns the last non-empty, non-command log line from a step.
