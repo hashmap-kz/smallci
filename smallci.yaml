@@ -5,6 +5,8 @@ jobs:
         run: gofumpt -w .
       - name: vet
         run: go vet ./...
+      - name: lint
+        run: golangci-lint run --output.tab.path=stdout
 
   - name: test
     steps:
@@ -16,4 +18,9 @@ jobs:
   - name: build
     steps:
       - name: build
-        run: go build ./...
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/smallci
+
+  - name: docker
+    steps:
+      - name: image
+        run: docker buildx build -t smallci .

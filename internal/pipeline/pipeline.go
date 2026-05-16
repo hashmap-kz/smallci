@@ -184,6 +184,39 @@ func (p *Pipeline) RerunJob(jobIdx int) {
 	go p.runJob(j)
 }
 
+// RerunAll resets every job and step and re-runs the full pipeline.
+func (p *Pipeline) RerunAll() {
+	p.mu.Lock()
+	for _, j := range p.Jobs {
+		j.Status = StatusWaiting
+		for _, s := range j.Steps {
+			s.mu.Lock()
+			s.Status = StatusWaiting
+			s.Logs = nil
+			s.StartTime = time.Time{}
+			s.EndTime = time.Time{}
+			s.mu.Unlock()
+		}
+	}
+	p.done = make(chan struct{})
+	p.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, j := range p.Jobs {
+		j := j
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p.runJob(j)
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(p.done)
+		p.notify()
+	}()
+}
+
 func (p *Pipeline) setJobStatus(j *Job, status Status) {
 	p.mu.Lock()
 	j.Status = status
