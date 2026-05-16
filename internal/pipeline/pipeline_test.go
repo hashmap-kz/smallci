@@ -619,6 +619,76 @@ func TestStepEnvVarOverridesParentEnv(t *testing.T) {
 	}
 }
 
+func TestJobEnvVarInheritedByStep(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Jobs: []config.JobConfig{
+			{
+				Name: "env", Env: map[string]string{"SMALLCI_JOB_VAR": "from_job"},
+				Steps: []config.StepConfig{
+					{Name: "print", Run: "echo $SMALLCI_JOB_VAR"},
+				},
+			},
+		},
+	}
+	p := NewPipeline(cfg)
+	p.Run(noopNotify)
+	waitDone(t, p, 5*time.Second)
+
+	if !p.AllPassed() {
+		t.Fatal("want AllPassed=true")
+	}
+	logs := p.Jobs[0].Steps[0].GetLogs()
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line, "from_job") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want log line containing %q, got %v", "from_job", logs)
+	}
+}
+
+func TestStepEnvOverridesJobEnv(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Jobs: []config.JobConfig{
+			{
+				Name: "env", Env: map[string]string{"SMALLCI_OVERRIDE_JOB": "job_value"},
+				Steps: []config.StepConfig{
+					{Name: "override", Run: "echo $SMALLCI_OVERRIDE_JOB", Env: map[string]string{
+						"SMALLCI_OVERRIDE_JOB": "step_value",
+					}},
+				},
+			},
+		},
+	}
+	p := NewPipeline(cfg)
+	p.Run(noopNotify)
+	waitDone(t, p, 5*time.Second)
+
+	logs := p.Jobs[0].Steps[0].GetLogs()
+	for _, line := range logs {
+		if strings.Contains(line, "job_value") {
+			t.Errorf("step env should override job env; found job_value in log: %v", logs)
+		}
+	}
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line, "step_value") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want log line containing %q, got %v", "step_value", logs)
+	}
+}
+
 func TestStepWithNoEnvInheritsParentEnv(t *testing.T) {
 	t.Setenv("SMALLCI_INHERIT_TEST", "inherited_value")
 

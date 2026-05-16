@@ -13,8 +13,9 @@ type StepConfig struct {
 }
 
 type JobConfig struct {
-	Name  string       `yaml:"name"`
-	Steps []StepConfig `yaml:"steps"`
+	Name  string            `yaml:"name"`
+	Env   map[string]string `yaml:"env,omitempty"`
+	Steps []StepConfig      `yaml:"steps"`
 }
 
 type Config struct {

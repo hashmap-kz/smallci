@@ -151,6 +151,45 @@ jobs:
 			},
 		},
 		{
+			name: "job env vars are parsed",
+			yaml: `
+jobs:
+  - name: build
+    env:
+      CGO_ENABLED: "0"
+      GOFLAGS: -mod=vendor
+    steps:
+      - name: compile
+        run: go build ./...
+`,
+			check: func(t *testing.T, cfg *Config) {
+				job := cfg.Jobs[0]
+				if len(job.Env) != 2 {
+					t.Fatalf("want 2 job env vars, got %d", len(job.Env))
+				}
+				if job.Env["CGO_ENABLED"] != "0" {
+					t.Errorf("CGO_ENABLED: want %q, got %q", "0", job.Env["CGO_ENABLED"])
+				}
+				if job.Env["GOFLAGS"] != "-mod=vendor" {
+					t.Errorf("GOFLAGS: want %q, got %q", "-mod=vendor", job.Env["GOFLAGS"])
+				}
+			},
+		},
+		{
+			name: "job without env has nil env map",
+			yaml: `
+jobs:
+  - name: build
+    steps:
+      - run: go build ./...
+`,
+			check: func(t *testing.T, cfg *Config) {
+				if cfg.Jobs[0].Env != nil {
+					t.Errorf("want nil job env, got %v", cfg.Jobs[0].Env)
+				}
+			},
+		},
+		{
 			name: "step without env has nil env map",
 			yaml: `
 jobs:
