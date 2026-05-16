@@ -230,7 +230,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			return m, tea.Quit
 
 		case "tab":
@@ -1071,7 +1071,7 @@ func (m *Model) renderStatusBar() string {
 		"f fail", "r rerun", "R reload",
 		viewToggle, zLabel,
 		"/ search",
-		"q quit",
+		"ctrl+c quit",
 	}
 	line2 := styleHelp.Width(m.width).Render("  " + strings.Join(hints, "  ·  "))
 
