@@ -329,15 +329,16 @@ func (m *Model) handlePipelineUpdate() {
 	// Auto-jump to first new failure.
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
-			if s.Status == pipeline.StatusFailed && !m.seenFailed[s] {
-				m.seenFailed[s] = true
-				m.folded[ji] = false
-				m.cursor = cursorPos{ji, si}
-				m.focus = focusLog
-				m.autoFollow = false
-				m.lastLogLen = -1
-				return
+			if s.Status != pipeline.StatusFailed || m.seenFailed[s] {
+				continue
 			}
+			m.seenFailed[s] = true
+			m.folded[ji] = false
+			m.cursor = cursorPos{ji, si}
+			m.focus = focusLog
+			m.autoFollow = false
+			m.lastLogLen = -1
+			return
 		}
 	}
 
@@ -361,14 +362,15 @@ func (m *Model) handlePipelineUpdate() {
 func (m *Model) jumpToFirstFailure() {
 	for ji, j := range m.pipeline.Jobs {
 		for si, s := range j.Steps {
-			if s.Status == pipeline.StatusFailed {
-				m.folded[ji] = false
-				m.cursor = cursorPos{ji, si}
-				m.focus = focusLog
-				m.lastLogLen = -1
-				m.syncLogContent(true)
-				return
+			if s.Status != pipeline.StatusFailed {
+				continue
 			}
+			m.folded[ji] = false
+			m.cursor = cursorPos{ji, si}
+			m.focus = focusLog
+			m.lastLogLen = -1
+			m.syncLogContent(true)
+			return
 		}
 	}
 }

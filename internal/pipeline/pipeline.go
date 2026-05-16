@@ -318,7 +318,7 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 		return
 	}
 
-	cmd := exec.Command("sh", "-c", s.Command)
+	cmd := exec.Command("sh", "-c", s.Command) //nolint:gosec
 	cmd.Stdout = &lineWriter{step: s, notify: p.notify}
 	cmd.Stderr = &lineWriter{step: s, notify: p.notify}
 
