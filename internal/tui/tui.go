@@ -14,36 +14,79 @@ import (
 
 // palette
 //
-// Avoid hard-coded background colors - terminal backgrounds vary and mixing
-// forced backgrounds with the terminal default creates visible patches.
+// Two layers: four grays for text hierarchy, four semantic colors for status.
+// colAmber is the single accent: cursor, focused borders, search, log commands.
+// Avoid hard-coded background colors - terminal backgrounds vary.
 var (
+	// borders
 	colBorder    = lipgloss.Color("#3a3a3a")
-	colBorderF   = lipgloss.Color("#f5a623")
+	colBorderF   = lipgloss.Color("#268bd2")
 	colBorderOK  = lipgloss.Color("#4ec94e")
 	colBorderErr = lipgloss.Color("#e05252")
-	colMuted     = lipgloss.Color("#5c5c5c")
-	colDim       = lipgloss.Color("#8a8a8a")
-	colText      = lipgloss.Color("#d7d7d7")
-	colAmber     = lipgloss.Color("#f5a623")
-	colGreen     = lipgloss.Color("#4ec94e")
-	colRed       = lipgloss.Color("#e05252")
-	colBlue      = lipgloss.Color("#5b9cf6")
-	colLogCmd    = lipgloss.Color("#f5a623")
-	colLogText   = lipgloss.Color("#b8b8b8")
+
+	// text hierarchy (coolest → brightest)
+	colMuted = lipgloss.Color("#5c5c5c") // help hints, very secondary
+	colSub   = lipgloss.Color("#b8b8b8") // log body, secondary labels
+	colText  = lipgloss.Color("#d7d7d7") // generic primary text, search query
+
+	// accent - cursor, focused borders, search, log command prefix, running dot
+	colAmber = lipgloss.Color("#268bd2")
+
+	// semantic status - used only for pass/fail/running indicators
+	colGreen = lipgloss.Color("#4ec94e")
+	colRed   = lipgloss.Color("#e05252")
+	colBlue  = lipgloss.Color("#5b9cf6")
+
+	// structural names - mutable so C cycles themes at runtime
+	colJobName  = lipgloss.Color("#b58900")
+	colStepName = lipgloss.Color("#2aa198")
 )
 
-// jobPalette assigns a distinct accent color to each job by index.
-var jobPalette = []lipgloss.Color{
-	lipgloss.Color("#5b9cf6"), // blue
-	lipgloss.Color("#c678dd"), // purple
-	lipgloss.Color("#56b6c2"), // cyan
-	lipgloss.Color("#e06c75"), // salmon
-	lipgloss.Color("#98c379"), // sage
-	lipgloss.Color("#e5c07b"), // gold
+type paletteTheme struct {
+	name    string
+	accent  lipgloss.Color // focused borders, cursor, search, log cmd, running badge
+	jobName lipgloss.Color
+	step    lipgloss.Color
 }
 
-func jobColor(idx int) lipgloss.Color {
-	return jobPalette[idx%len(jobPalette)]
+// paletteThemes is the ring buffer cycled by the C key.
+// accent drives the whole app personality; jobName/step color the tree names.
+var paletteThemes = []paletteTheme{
+	{"Solarized", "#268bd2", "#b58900", "#2aa198"},
+	{"One Dark", "#f5a623", "#e5c07b", "#61afef"},
+	{"Nord", "#88c0d0", "#ebcb8b", "#81a1c1"},
+	{"Gruvbox", "#fe8019", "#d79921", "#8ec07c"},
+	{"Dracula", "#ff79c6", "#bd93f9", "#8be9fd"},
+	{"Tokyo Night", "#7aa2f7", "#bb9af7", "#73daca"},
+	{"Catppuccin", "#cba6f7", "#fab387", "#94e2d5"},
+	{"Monokai", "#a6e22e", "#fd971f", "#66d9e8"},
+	{"Rose Pine", "#eb6f92", "#f6c177", "#9ccfd8"},
+	{"Everforest", "#a7c080", "#dbbc7f", "#7fbbb3"},
+	{"Material", "#82aaff", "#ffcb6b", "#c3e88d"},
+	{"Cyberpunk", "#00ff9f", "#ff2079", "#00e5ff"},
+	{"Monochrome", "#b8b8b8", "#d7d7d7", "#8a8a8a"},
+}
+
+func applyTheme(idx int) {
+	t := paletteThemes[idx]
+	colAmber = t.accent
+	colBorderF = t.accent
+	colJobName = t.jobName
+	colStepName = t.step
+	// rebuild all styles that reference the now-mutated color vars
+	styleStepName = lipgloss.NewStyle().Foreground(colStepName)
+	styleCursor = lipgloss.NewStyle().Foreground(colAmber).Bold(true)
+	styleLogCmd = lipgloss.NewStyle().Foreground(colAmber)
+	styleLogSearch = lipgloss.NewStyle().Foreground(colAmber)
+	styleLogSearchCur = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1a1a")).Background(colAmber).Bold(true)
+	stylePaneFocused = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colBorderF).
+		Padding(0, 1)
+	stylePaneTreeFocused = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colBorderF).
+		Padding(0, 0)
 }
 
 var (
@@ -69,10 +112,10 @@ var (
 				Padding(0, 0)
 
 	styleStepName = lipgloss.NewStyle().
-			Foreground(colDim)
+			Foreground(colStepName)
 
 	styleStepNameActive = lipgloss.NewStyle().
-				Foreground(colText)
+				Foreground(colBlue)
 
 	styleCursor = lipgloss.NewStyle().
 			Foreground(colAmber).
@@ -84,10 +127,10 @@ var (
 	styleHelp = lipgloss.NewStyle().
 			Foreground(colMuted)
 
-	styleLogCmd       = lipgloss.NewStyle().Foreground(colLogCmd)
-	styleLogText      = lipgloss.NewStyle().Foreground(colLogText)
-	styleLogSearch    = lipgloss.NewStyle().Foreground(lipgloss.Color("#f5a623"))
-	styleLogSearchCur = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1a1a")).Background(lipgloss.Color("#f5a623")).Bold(true)
+	styleLogCmd       = lipgloss.NewStyle().Foreground(colAmber)
+	styleLogText      = lipgloss.NewStyle().Foreground(colSub)
+	styleLogSearch    = lipgloss.NewStyle().Foreground(colAmber)
+	styleLogSearchCur = lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1a1a")).Background(colAmber).Bold(true)
 	styleErrHint      = lipgloss.NewStyle().Foreground(colRed).Faint(true)
 )
 
@@ -204,6 +247,9 @@ type Model struct {
 
 	// treeOffset is the first visible rendered line index in the tree.
 	treeOffset int
+
+	// themeIdx is the index into paletteThemes for live palette cycling (C key).
+	themeIdx int
 }
 
 // NewModel creates a new Model wrapping the given pipeline.
@@ -280,6 +326,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.focus = focusTree
 			}
+
+		case "C":
+			m.themeIdx = (m.themeIdx + 1) % len(paletteThemes)
+			applyTheme(m.themeIdx)
 
 		case "t":
 			if m.mode == viewTimeline {
@@ -852,7 +902,6 @@ func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
 	onJob := m.cursor.jobIdx == ji && m.cursor.isJob()
 	cursorOnCard := m.cursor.jobIdx == ji
 	folded := m.folded[ji]
-	jCol := jobColor(ji)
 
 	// Right side of header: N/M fold [dur]
 	done := 0
@@ -880,12 +929,7 @@ func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
 	if onJob {
 		cur = styleCursor.Render("▶ ")
 	}
-	var nameStyle lipgloss.Style
-	if onJob {
-		nameStyle = lipgloss.NewStyle().Foreground(jCol).Bold(true)
-	} else {
-		nameStyle = lipgloss.NewStyle().Foreground(jCol)
-	}
+	nameStyle := lipgloss.NewStyle().Foreground(colJobName).Bold(onJob)
 	nameW := cardContentW - 4 - rightW
 	if nameW < 1 {
 		nameW = 1
@@ -936,7 +980,7 @@ func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
 
 	borderCol := colBorder
 	if cursorOnCard {
-		borderCol = jCol
+		borderCol = colAmber
 	}
 	if m.flashTick > 0 {
 		if m.flashPassed {
@@ -945,7 +989,7 @@ func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
 			borderCol = colBorderErr
 		}
 	}
-	// No Width() here — setting Width triggers lipgloss word-wrap which
+	// No Width() here - setting Width triggers lipgloss word-wrap which
 	// splits trailing pad-spaces from the name column and pushes the badge
 	// to the next line. Content lines are already exactly cardContentW wide,
 	// so the border draws at the right size without enforcement.
@@ -993,7 +1037,7 @@ func (m *Model) renderJobSummary() string {
 			fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colRed).Bold(true).Render("✗ pipeline failed"))
 		}
 	}
-	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(jobColor(m.cursor.jobIdx)).Bold(true).Render(j.Name))
+	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colJobName).Bold(true).Render(j.Name))
 
 	for _, s := range j.Steps {
 		badge := statusBadge(s, m.tick)
@@ -1062,10 +1106,10 @@ func (m *Model) renderTimeline() string {
 	var sb strings.Builder
 	fmtx.Fprintf(&sb, " Timeline  %s total\n\n", durStr(totalDur))
 
-	for ji, j := range m.pipeline.Jobs {
+	for _, j := range m.pipeline.Jobs {
 		jStart, jEnd := jobTimeBounds(j)
 		if jStart.IsZero() {
-			label := lipgloss.NewStyle().Foreground(jobColor(ji)).Render(fmt.Sprintf("%-*s", labelW, truncate(j.Name, labelW)))
+			label := lipgloss.NewStyle().Foreground(colJobName).Render(fmt.Sprintf("%-*s", labelW, truncate(j.Name, labelW)))
 			fmtx.Fprintf(&sb, "  %s  %s\n", label, styleDim.Render("·"))
 			continue
 		}
@@ -1080,7 +1124,7 @@ func (m *Model) renderTimeline() string {
 			indent:      0,
 			status:      j.Status,
 			barChar:     "█",
-			labelColor:  jobColor(ji),
+			labelColor:  colJobName,
 		}))
 		for _, s := range j.Steps {
 			row := renderTimelineStepRow(ctx, s, stepIndent)
@@ -1139,17 +1183,22 @@ func (m *Model) renderStatusBar() string {
 	var selInfo string
 	if m.cursor.jobIdx < len(m.pipeline.Jobs) {
 		j := m.pipeline.Jobs[m.cursor.jobIdx]
-		jLabel := lipgloss.NewStyle().Foreground(jobColor(m.cursor.jobIdx)).Render(j.Name)
+		jLabel := lipgloss.NewStyle().Foreground(colJobName).Render(j.Name)
 		if m.cursor.isJob() {
 			selInfo = jLabel
 		} else if m.cursor.stepIdx < len(j.Steps) {
 			s := j.Steps[m.cursor.stepIdx]
-			selInfo = jLabel + styleDim.Render(" › ") + lipgloss.NewStyle().Foreground(colText).Render(s.Name)
+			selInfo = jLabel + styleDim.Render(" › ") + lipgloss.NewStyle().Foreground(colStepName).Render(s.Name)
 		}
 	}
 
+	// Theme indicator: accent-colored diamond + name, shown on line 1.
+	themeTag := lipgloss.NewStyle().Foreground(colAmber).Bold(true).Render(
+		"◆ " + paletteThemes[m.themeIdx].name,
+	)
+
 	line1Left := "  " + strings.Join(statusParts, "  ")
-	line1Right := selInfo + "  "
+	line1Right := themeTag + "  " + selInfo + "  "
 	pad1 := m.width - lipgloss.Width(line1Left) - lipgloss.Width(line1Right)
 	if pad1 < 0 {
 		pad1 = 0
@@ -1174,6 +1223,7 @@ func (m *Model) renderStatusBar() string {
 		"f fail", "r rerun", "R reload",
 		viewToggle, zLabel,
 		"/ search",
+		"C theme",
 		"ctrl+c quit",
 	}
 	line2 := styleHelp.Width(m.width).Render("  " + strings.Join(hints, "  ·  "))
