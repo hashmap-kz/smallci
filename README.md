@@ -92,6 +92,7 @@ jobs:
 | `/`                    | Search in logs (type query, `Enter` to confirm)        |
 | `n` / `N`              | Next / previous search match                           |
 | `C`                    | Cycle color theme (13 built-in themes)                 |
+| `H`                    | Help                                                   |
 | `ctrl+c`               | Quit                                                   |
 
 ---
