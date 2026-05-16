@@ -323,10 +323,14 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 
 	cmd := exec.Command("sh", "-c", s.Command) //nolint:gosec
 	cmd.Env = mergeEnv(os.Environ(), s.Env)
-	cmd.Stdout = &lineWriter{step: s, notify: p.notify}
-	cmd.Stderr = &lineWriter{step: s, notify: p.notify}
+	stdout := &lineWriter{step: s, notify: p.notify}
+	stderr := &lineWriter{step: s, notify: p.notify}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	err := cmd.Run()
+	stdout.flush()
+	stderr.flush()
 
 	p.mu.Lock()
 	s.EndTime = time.Now()
@@ -383,4 +387,12 @@ func (lw *lineWriter) Write(p []byte) (int, error) {
 		lw.notify()
 	}
 	return len(p), nil
+}
+
+func (lw *lineWriter) flush() {
+	if lw.partial != "" {
+		lw.step.AppendLog(lw.partial)
+		lw.partial = ""
+		lw.notify()
+	}
 }
