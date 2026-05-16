@@ -62,6 +62,7 @@ func (s *Step) GetLogs() []string {
 // Job groups steps that run sequentially. Jobs themselves run in parallel.
 type Job struct {
 	Name  string
+	Env   map[string]string
 	Steps []*Step
 
 	Status Status // aggregate: running if any step running, failed if any failed, etc.
@@ -108,6 +109,7 @@ func NewPipeline(cfg *config.Config) *Pipeline {
 	for _, jc := range cfg.Jobs {
 		job := &Job{
 			Name:   jc.Name,
+			Env:    jc.Env,
 			Status: StatusWaiting,
 		}
 		for _, sc := range jc.Steps {
@@ -301,7 +303,7 @@ func (p *Pipeline) runJob(j *Job) {
 	p.setJobStatus(j, StatusPassed)
 }
 
-func (p *Pipeline) runStep(_ *Job, s *Step) {
+func (p *Pipeline) runStep(j *Job, s *Step) {
 	p.mu.Lock()
 	s.Status = StatusRunning
 	s.StartTime = time.Now()
@@ -322,7 +324,7 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 	}
 
 	cmd := exec.Command("sh", "-c", s.Command) //nolint:gosec
-	cmd.Env = mergeEnv(os.Environ(), s.Env)
+	cmd.Env = mergeEnv(os.Environ(), mergeMaps(j.Env, s.Env))
 	stdout := &lineWriter{step: s, notify: p.notify}
 	stderr := &lineWriter{step: s, notify: p.notify}
 	cmd.Stdout = stdout
@@ -344,6 +346,25 @@ func (p *Pipeline) runStep(_ *Job, s *Step) {
 		s.AppendLog(fmt.Sprintf("error: %v", err))
 	}
 	p.notify()
+}
+
+// mergeMaps returns a new map with all keys from base, with overrides applied on top.
+// When both inputs are empty, nil is returned.
+func mergeMaps(base, overrides map[string]string) map[string]string {
+	if len(base) == 0 {
+		return overrides
+	}
+	if len(overrides) == 0 {
+		return base
+	}
+	out := make(map[string]string, len(base)+len(overrides))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
+	}
+	return out
 }
 
 // mergeEnv returns a copy of base with keys from overrides replaced or appended.
