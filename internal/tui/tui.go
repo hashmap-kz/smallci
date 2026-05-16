@@ -250,6 +250,9 @@ type Model struct {
 
 	// themeIdx is the index into paletteThemes for live palette cycling (C key).
 	themeIdx int
+
+	// showHelp replaces the right pane with the keybinding reference.
+	showHelp bool
 }
 
 // NewModel creates a new Model wrapping the given pipeline.
@@ -319,6 +322,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+
+		case "esc":
+			if m.showHelp {
+				m.showHelp = false
+			}
+
+		case "H":
+			m.showHelp = !m.showHelp
 
 		case "tab":
 			if m.focus == focusTree {
@@ -832,6 +843,8 @@ func (m *Model) View() string {
 
 	var right string
 	switch {
+	case m.showHelp:
+		right = m.renderHelpView()
 	case m.mode == viewTimeline:
 		right = m.renderTimeline()
 	case m.cursor.isJob():
@@ -1209,26 +1222,75 @@ func (m *Model) renderStatusBar() string {
 	if m.focus == focusLog {
 		pane = "logs"
 	}
-	viewToggle := "t timeline"
-	if m.mode == viewTimeline {
-		viewToggle = "t normal"
-	}
-	zLabel := "z zoom"
-	if m.fullLog {
-		zLabel = "z split"
-	}
 	hints := []string{
 		fmt.Sprintf("tab[%s]", pane),
 		"↑↓/jk nav", "J/K jobs", "h/l fold",
-		"f fail", "r rerun", "R reload",
-		viewToggle, zLabel,
-		"/ search",
-		"C theme",
+		"r rerun", "R reload",
 		"ctrl+c quit",
+		"H help",
 	}
 	line2 := styleHelp.Width(m.width).Render("  " + strings.Join(hints, "  ·  "))
 
 	return line1 + "\n" + line2
+}
+
+func (m *Model) renderHelpView() string {
+	rightW := m.rightPaneWidth()
+	paneH := m.height - 4
+
+	type binding struct {
+		key  string
+		desc string
+	}
+	groups := []struct {
+		title    string
+		bindings []binding
+	}{
+		{"Navigation", []binding{
+			{"↑↓ / j/k", "move cursor"},
+			{"J / K", "jump between jobs"},
+			{"h / l", "fold / unfold job"},
+			{"tab", "switch focus (tree / logs)"},
+		}},
+		{"Actions", []binding{
+			{"r", "rerun selected job or step"},
+			{"R", "reload (rerun all)"},
+			{"f", "jump to first failure"},
+		}},
+		{"View", []binding{
+			{"t", "toggle timeline view"},
+			{"z", "toggle zoom (full log)"},
+			{"C", "cycle color theme"},
+		}},
+		{"Search (log pane)", []binding{
+			{"/", "start search"},
+			{"n / N", "next / prev match"},
+			{"Enter", "confirm"},
+			{"Esc", "cancel"},
+		}},
+		{"Other", []binding{
+			{"H", "toggle this help"},
+			{"ctrl+c", "quit"},
+		}},
+	}
+
+	var sb strings.Builder
+	fmtx.Fprintf(&sb, " %s\n\n", lipgloss.NewStyle().Foreground(colAmber).Bold(true).Render("Keyboard Shortcuts"))
+
+	keyStyle := lipgloss.NewStyle().Foreground(colText).Bold(true)
+	for _, g := range groups {
+		fmtx.Fprintf(&sb, " %s\n", styleDim.Render(g.title))
+		for _, b := range g.bindings {
+			fmtx.Fprintf(&sb, "   %s  %s\n",
+				keyStyle.Render(fmt.Sprintf("%-12s", b.key)),
+				styleDim.Render(b.desc),
+			)
+		}
+		sb.WriteByte('\n')
+	}
+	fmtx.Fprintf(&sb, " %s", styleDim.Render("press H or Esc to close"))
+
+	return m.paneStyle(focusLog).Width(rightW).Height(paneH).Render(sb.String())
 }
 
 func (m *Model) renderSearchBar() string {
