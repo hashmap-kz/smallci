@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -549,6 +550,99 @@ func TestPipelineRerunJob(t *testing.T) {
 
 	if getStepStatus(p, p.Jobs[0].Steps[0]) != StatusPassed {
 		t.Errorf("want step StatusPassed after rerun, got %v", getStepStatus(p, p.Jobs[0].Steps[0]))
+	}
+}
+
+func TestStepEnvVarPassedToCommand(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Jobs: []config.JobConfig{
+			{Name: "env", Steps: []config.StepConfig{
+				{Name: "print", Run: "echo $SMALLCI_TEST_VAR", Env: map[string]string{
+					"SMALLCI_TEST_VAR": "hello_from_env",
+				}},
+			}},
+		},
+	}
+	p := NewPipeline(cfg)
+	p.Run(noopNotify)
+	waitDone(t, p, 5*time.Second)
+
+	if !p.AllPassed() {
+		t.Fatal("want AllPassed=true")
+	}
+	logs := p.Jobs[0].Steps[0].GetLogs()
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line, "hello_from_env") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want log line containing %q, got %v", "hello_from_env", logs)
+	}
+}
+
+func TestStepEnvVarOverridesParentEnv(t *testing.T) {
+	t.Setenv("SMALLCI_OVERRIDE_TEST", "parent_value")
+
+	cfg := &config.Config{
+		Jobs: []config.JobConfig{
+			{Name: "env", Steps: []config.StepConfig{
+				{Name: "override", Run: "echo $SMALLCI_OVERRIDE_TEST", Env: map[string]string{
+					"SMALLCI_OVERRIDE_TEST": "step_value",
+				}},
+			}},
+		},
+	}
+	p := NewPipeline(cfg)
+	p.Run(noopNotify)
+	waitDone(t, p, 5*time.Second)
+
+	logs := p.Jobs[0].Steps[0].GetLogs()
+	for _, line := range logs {
+		if strings.Contains(line, "parent_value") {
+			t.Errorf("step env should override parent; found parent_value in log: %v", logs)
+		}
+	}
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line, "step_value") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want log line containing %q, got %v", "step_value", logs)
+	}
+}
+
+func TestStepWithNoEnvInheritsParentEnv(t *testing.T) {
+	t.Setenv("SMALLCI_INHERIT_TEST", "inherited_value")
+
+	cfg := &config.Config{
+		Jobs: []config.JobConfig{
+			{Name: "env", Steps: []config.StepConfig{
+				{Name: "inherit", Run: "echo $SMALLCI_INHERIT_TEST"},
+			}},
+		},
+	}
+	p := NewPipeline(cfg)
+	p.Run(noopNotify)
+	waitDone(t, p, 5*time.Second)
+
+	logs := p.Jobs[0].Steps[0].GetLogs()
+	found := false
+	for _, line := range logs {
+		if strings.Contains(line, "inherited_value") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("want step to inherit parent env; log %v", logs)
 	}
 }
 

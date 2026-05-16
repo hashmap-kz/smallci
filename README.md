@@ -67,7 +67,10 @@ jobs:
   - name: build
     steps:
       - name: build
-        run: CGO_ENABLED=0 go build -ldflags="-s -w" ./...
+        run: go build -ldflags="-s -w" ./...
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
 ```
 
 ---
