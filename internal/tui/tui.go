@@ -936,19 +936,17 @@ func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
 	}
 	rightW := lipgloss.Width(rightSide)
 
-	// Header layout: cur(2) + icon(1) + sp(1) + name(nameW) + right(rightW) = cardContentW
-	// Force the name column to an exact width so padding is trivially correct.
+	// Header: cur(2) + icon(1) + sp(1) + padding + right(rightW) = cardContentW
+	// Job name lives in the top border, not here.
 	cur := "  "
 	if onJob {
 		cur = styleCursor.Render("▶ ")
 	}
-	nameStyle := lipgloss.NewStyle().Foreground(colJobName).Bold(onJob)
-	nameW := cardContentW - 4 - rightW
-	if nameW < 1 {
-		nameW = 1
+	padW := cardContentW - 4 - rightW
+	if padW < 0 {
+		padW = 0
 	}
-	nameRendered := nameStyle.Width(nameW).Render(truncate(j.Name, nameW))
-	header := fmt.Sprintf("%s%s %s%s", cur, statusIcon(j.Status, m.tick), nameRendered, rightSide)
+	header := cur + statusIcon(j.Status, m.tick) + " " + strings.Repeat(" ", padW) + rightSide
 
 	// Step layout: " "(1) + treeConn(2) + " "(1) + cur(2) + name(stepNameW) + badge(badgeWidth) = cardContentW
 	const stepPrefix = 6
@@ -1002,15 +1000,28 @@ func (m *Model) renderJobCard(ji int, j *pipeline.Job) string {
 			borderCol = colBorderErr
 		}
 	}
-	// No Width() here - setting Width triggers lipgloss word-wrap which
-	// splits trailing pad-spaces from the name column and pushes the badge
-	// to the next line. Content lines are already exactly cardContentW wide,
-	// so the border draws at the right size without enforcement.
-	return lipgloss.NewStyle().
+
+	// Top border with embedded job name: ╭─ NAME ──...──╮
+	// Total card width = leftWidth = 38; chars used: ╭(1)─(1)sp(1)+name+sp(1)+dashes+╮(1) = 5+nameVisW+dashes = 38
+	bc := lipgloss.NewStyle().Foreground(borderCol)
+	nameTrunc := truncate(j.Name, leftWidth-6) // reserve space for ╭─ NAME ─╮ minimum
+	nameVisW := lipgloss.Width(nameTrunc)
+	dashCount := leftWidth - 5 - nameVisW
+	if dashCount < 1 {
+		dashCount = 1
+	}
+	nameStyled := lipgloss.NewStyle().Foreground(colJobName).Bold(true).Render(nameTrunc)
+	topBorder := bc.Render("╭─ ") + nameStyled + bc.Render(" "+strings.Repeat("─", dashCount)+"╮")
+
+	// Render content with left/right/bottom border only; top is our custom title line.
+	body := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		BorderTop(false).
 		BorderForeground(borderCol).
 		Padding(0, 1).
 		Render(content)
+
+	return topBorder + "\n" + body
 }
 
 func (m *Model) renderLogPane() string {
