@@ -1193,7 +1193,11 @@ func (m *Model) renderTimeline() string {
 		fmt.Sprintf("  %s  0s%s%s", strings.Repeat(" ", labelW), strings.Repeat(" ", gap), axisRight),
 	))
 
-	return style.Width(rightW).Height(paneH).Render(sb.String())
+	lines := strings.Split(strings.TrimRight(sb.String(), "\n"), "\n")
+	if len(lines) > paneH {
+		lines = lines[:paneH]
+	}
+	return style.Width(rightW).Height(paneH).Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) renderStatusBar() string {
