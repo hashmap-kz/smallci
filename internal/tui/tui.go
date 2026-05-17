@@ -430,6 +430,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.jumpToJob(-1)
 			}
 
+		case "H":
+			if m.focus == focusTree {
+				for ji := range m.pipeline.Jobs {
+					m.folded[ji] = true
+				}
+			}
+
+		case "L":
+			if m.focus == focusTree {
+				for ji := range m.pipeline.Jobs {
+					m.folded[ji] = false
+				}
+				m.adjustTreeOffset()
+			}
+
 		case "up", "k":
 			if m.focus == focusTree {
 				m.autoFollow = false
@@ -1265,7 +1280,7 @@ func (m *Model) renderStatusBar() string {
 	}
 	hints := []string{
 		fmt.Sprintf("tab[%s]", pane),
-		"↑↓/jk nav", "J/K jobs", "h/l fold",
+		"↑↓/jk nav", "J/K jobs", "h/l fold", "H/L fold-all/expand-all",
 		"r rerun", "R reload",
 		"ctrl+c quit",
 		"? help",
@@ -1291,6 +1306,7 @@ func (m *Model) renderHelpView() string {
 			{"↑↓ / j/k", "move cursor"},
 			{"J / K", "jump between jobs"},
 			{"h / l", "fold / unfold job"},
+			{"H / L", "fold all / expand all"},
 			{"tab", "switch focus (tree / logs)"},
 		}},
 		{"Actions", []binding{
