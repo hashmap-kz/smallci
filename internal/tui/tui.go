@@ -1266,7 +1266,10 @@ func (m *Model) renderStatusBar() string {
 		"[" + paletteThemes[m.themeIdx].name + "]",
 	)
 
-	line1Left := "  " + strings.Join(statusParts, "  ")
+	brand := lipgloss.NewStyle().Foreground(colAmber).Render("▶") +
+		lipgloss.NewStyle().Foreground(colSub).Render(" small") +
+		lipgloss.NewStyle().Foreground(colJobName).Bold(true).Render("ci")
+	line1Left := "  " + brand + "  " + strings.Join(statusParts, "  ")
 	line1Right := selInfo + "  " + themeTag
 	pad1 := m.width - lipgloss.Width(line1Left) - lipgloss.Width(line1Right)
 	if pad1 < 0 {
@@ -1402,12 +1405,21 @@ func renderTimelineBar(o *timelineBarOpts) string {
 	offsetFrac := float64(o.start.Sub(o.globalStart)) / float64(o.totalDur)
 	durFrac := float64(o.end.Sub(o.start)) / float64(o.totalDur)
 	lead := int(offsetFrac * float64(o.barW))
+	if lead < 0 {
+		lead = 0
+	}
+	if lead >= o.barW {
+		lead = o.barW - 1
+	}
 	barLen := int(durFrac * float64(o.barW))
 	if barLen < 1 {
 		barLen = 1
 	}
 	if lead+barLen > o.barW {
 		barLen = o.barW - lead
+		if barLen < 1 {
+			barLen = 1
+		}
 	}
 	bar := lipgloss.NewStyle().Foreground(statusBarColor(o.status)).Render(strings.Repeat(o.barChar, barLen))
 	labelStyle := styleDim
