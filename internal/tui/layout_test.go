@@ -279,6 +279,67 @@ func TestPaneHeights(t *testing.T) {
 	}
 }
 
+// TestRightPaneHeights verifies that right-pane renderers (timeline, help) never
+// exceed their allocated height. termH=25 gives paneH=21, which is smaller than
+// the help content (~29 lines) and timeline content (~40 lines for 9x3-step jobs),
+// so both truncation paths are exercised.
+func TestRightPaneHeights(t *testing.T) {
+	t.Parallel()
+
+	const termW, termH = 142, 25
+
+	now := time.Now()
+	jobs := make([]config.JobConfig, 9)
+	for i := range jobs {
+		jobs[i] = config.JobConfig{
+			Name: fmt.Sprintf("job%d", i),
+			Steps: []config.StepConfig{
+				{Name: "stepA", Run: "echo a"},
+				{Name: "stepB", Run: "echo b"},
+				{Name: "stepC", Run: "echo c"},
+			},
+		}
+	}
+	cfg := &config.Config{Jobs: jobs}
+
+	m := newTestModel(cfg)
+	m.width = termW
+	m.height = termH
+	m.rebuildLogViewport()
+	m.cursor = cursorPos{jobIdx: 0, stepIdx: -1}
+
+	// Populate step timings so renderTimeline draws real bars.
+	for ji := range m.pipeline.Jobs {
+		j := m.pipeline.Jobs[ji]
+		for si := range j.Steps {
+			j.Steps[si].Status = pipeline.StatusPassed
+			j.Steps[si].StartTime = now.Add(time.Duration(si) * time.Second)
+			j.Steps[si].EndTime = now.Add(time.Duration(si+1) * time.Second)
+		}
+	}
+
+	// paneH = termH-4; visual height with borders = paneH+2 = termH-2.
+	wantH := termH - 2
+
+	cases := []struct {
+		name   string
+		render func() string
+	}{
+		{"timeline", m.renderTimeline},
+		{"help", m.renderHelpView},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := tc.render()
+			if h := strings.Count(out, "\n") + 1; h != wantH {
+				t.Errorf("%s height = %d, want %d", tc.name, h, wantH)
+			}
+		})
+	}
+}
+
 // TestFullViewHeight verifies that View() produces exactly m.height lines so
 // the panes and status bar frame add up to the terminal height with no overflow
 // or underflow.

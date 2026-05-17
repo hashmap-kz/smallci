@@ -328,7 +328,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = false
 			}
 
-		case "H":
+		case "?":
 			m.showHelp = !m.showHelp
 
 		case "tab":
@@ -1268,7 +1268,7 @@ func (m *Model) renderStatusBar() string {
 		"↑↓/jk nav", "J/K jobs", "h/l fold",
 		"r rerun", "R reload",
 		"ctrl+c quit",
-		"H help",
+		"? help",
 	}
 	line2 := styleHelp.Width(m.width).Render("  " + strings.Join(hints, "  ·  "))
 
@@ -1310,7 +1310,7 @@ func (m *Model) renderHelpView() string {
 			{"Esc", "cancel"},
 		}},
 		{"Other", []binding{
-			{"H", "toggle this help"},
+			{"?", "toggle this help"},
 			{"ctrl+c", "quit"},
 		}},
 	}
@@ -1329,9 +1329,13 @@ func (m *Model) renderHelpView() string {
 		}
 		sb.WriteByte('\n')
 	}
-	fmtx.Fprintf(&sb, " %s", styleDim.Render("press H or Esc to close"))
+	fmtx.Fprintf(&sb, " %s", styleDim.Render("press ? or Esc to close"))
 
-	return m.paneStyle(focusLog).Width(rightW).Height(paneH).Render(sb.String())
+	lines := strings.Split(strings.TrimRight(sb.String(), "\n"), "\n")
+	if len(lines) > paneH {
+		lines = lines[:paneH]
+	}
+	return m.paneStyle(focusLog).Width(rightW).Height(paneH).Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) renderSearchBar() string {
