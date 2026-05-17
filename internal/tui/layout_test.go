@@ -236,3 +236,82 @@ func TestJobCardLineWidths(t *testing.T) {
 		})
 	}
 }
+
+// TestPaneHeights verifies that renderTree and renderLogPane produce the same
+// visual height, and that their sum + status bar == m.height.
+func TestPaneHeights(t *testing.T) {
+	const termW, termH = 142, 33
+
+	jobs := make([]config.JobConfig, 9)
+	for i := range jobs {
+		jobs[i] = config.JobConfig{
+			Name: fmt.Sprintf("job%d", i),
+			Steps: []config.StepConfig{
+				{Name: "stepA", Run: "echo a"},
+				{Name: "stepB", Run: "echo b"},
+				{Name: "stepC", Run: "echo c"},
+			},
+		}
+	}
+	cfg := &config.Config{Jobs: jobs}
+
+	m := newTestModel(cfg)
+	m.width = termW
+	m.height = termH
+	m.rebuildLogViewport()
+	m.cursor = cursorPos{jobIdx: 0, stepIdx: 0}
+
+	tree := m.renderTree()
+	logP := m.renderLogPane()
+	status := m.renderStatusBar()
+
+	treeH := strings.Count(tree, "\n") + 1
+	logH := strings.Count(logP, "\n") + 1
+	statusH := strings.Count(status, "\n") + 1
+
+	t.Logf("tree=%d log=%d status=%d sum=%d termH=%d", treeH, logH, statusH, treeH+statusH, termH)
+
+	if treeH != logH {
+		t.Errorf("tree height %d != log height %d — panes will misalign", treeH, logH)
+	}
+	if treeH+statusH != termH {
+		t.Errorf("pane(%d) + status(%d) = %d, want %d", treeH, statusH, treeH+statusH, termH)
+	}
+}
+
+// TestFullViewHeight verifies that View() produces exactly m.height lines so
+// the panes and status bar frame add up to the terminal height with no overflow
+// or underflow.
+func TestFullViewHeight(t *testing.T) {
+	t.Parallel()
+
+	const termW, termH = 142, 33
+
+	// Build a multi-job config similar to the real smallci.yaml.
+	jobs := make([]config.JobConfig, 5)
+	for i := range jobs {
+		jobs[i] = config.JobConfig{
+			Name: fmt.Sprintf("job%d", i),
+			Steps: []config.StepConfig{
+				{Name: "stepA", Run: "echo a"},
+				{Name: "stepB", Run: "echo b"},
+			},
+		}
+	}
+	cfg := &config.Config{Jobs: jobs}
+
+	m := newTestModel(cfg)
+	m.width = termW
+	m.height = termH
+	m.rebuildLogViewport()
+	// Put cursor on a step so renderLogPane is exercised.
+	m.cursor = cursorPos{jobIdx: 0, stepIdx: 0}
+
+	out := m.View()
+	lines := strings.Split(out, "\n")
+	got := len(lines)
+	if got != termH {
+		t.Errorf("View() returned %d lines, want %d\nfirst line: %q\nlast line: %q",
+			got, termH, lines[0], lines[len(lines)-1])
+	}
+}
