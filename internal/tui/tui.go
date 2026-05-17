@@ -1244,11 +1244,11 @@ func (m *Model) renderStatusBar() string {
 
 	// Theme indicator: accent-colored diamond + name, shown on line 1.
 	themeTag := lipgloss.NewStyle().Foreground(colAmber).Bold(true).Render(
-		"◆ " + paletteThemes[m.themeIdx].name,
+		"[" + paletteThemes[m.themeIdx].name + "]",
 	)
 
 	line1Left := "  " + strings.Join(statusParts, "  ")
-	line1Right := themeTag + "  " + selInfo + "  "
+	line1Right := selInfo + "  " + themeTag
 	pad1 := m.width - lipgloss.Width(line1Left) - lipgloss.Width(line1Right)
 	if pad1 < 0 {
 		pad1 = 0
