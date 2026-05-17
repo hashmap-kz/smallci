@@ -1,5 +1,5 @@
 jobs:
-  - name: lint
+  - name: lint-0
     steps:
       - name: fmt
         run: gofumpt -w .
@@ -8,7 +8,39 @@ jobs:
       - name: lint
         run: golangci-lint run --output.tab.path=stdout
 
-  - name: test
+  - name: test-0
+    steps:
+      - name: unit
+        run: go test -v ./...
+      - name: race
+        run: go test -v -race ./...
+
+  - name: lint-1
+    steps:
+      - name: fmt
+        run: gofumpt -w .
+      - name: vet
+        run: go vet ./...
+      - name: lint
+        run: golangci-lint run --output.tab.path=stdout
+
+  - name: test-1
+    steps:
+      - name: unit
+        run: go test -v ./...
+      - name: race
+        run: go test -v -race ./...
+
+  - name: lint-2
+    steps:
+      - name: fmt
+        run: gofumpt -w .
+      - name: vet
+        run: go vet ./...
+      - name: lint
+        run: golangci-lint run --output.tab.path=stdout
+
+  - name: test-2
     steps:
       - name: unit
         run: go test -v ./...

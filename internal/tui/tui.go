@@ -696,10 +696,33 @@ func (m *Model) adjustTreeOffset() {
 		innerH = 3
 	}
 	curLine := m.cursorLineInTree()
-	if curLine < m.treeOffset {
-		m.treeOffset = curLine
-	} else if curLine >= m.treeOffset+innerH {
-		m.treeOffset = curLine - innerH + 1
+
+	// For a job row, the top border (job name) is one line above curLine.
+	topLine := curLine
+	if m.cursor.isJob() && curLine > 0 {
+		topLine = curLine - 1
+	}
+
+	if topLine < m.treeOffset {
+		m.treeOffset = topLine
+	} else {
+		// Scroll far enough to show the full card body.
+		lastLine := curLine
+		if m.cursor.isJob() && m.cursor.jobIdx < len(m.pipeline.Jobs) {
+			j := m.pipeline.Jobs[m.cursor.jobIdx]
+			if m.folded[m.cursor.jobIdx] {
+				lastLine++
+			} else {
+				lastLine += len(j.Steps) + 1
+			}
+		}
+		if lastLine >= m.treeOffset+innerH {
+			newOffset := lastLine - innerH + 1
+			if newOffset > topLine {
+				newOffset = topLine // card taller than viewport: show from top border
+			}
+			m.treeOffset = newOffset
+		}
 	}
 	if m.treeOffset < 0 {
 		m.treeOffset = 0
@@ -906,6 +929,9 @@ func (m *Model) renderTree() string {
 	}
 	if start < len(allLines) {
 		allLines = allLines[start:]
+	}
+	if len(allLines) > paneH {
+		allLines = allLines[:paneH]
 	}
 
 	return m.paneStyle(focusTree).Width(leftWidth).Height(paneH).Render(strings.Join(allLines, "\n"))
